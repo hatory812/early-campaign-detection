@@ -267,7 +267,6 @@ def train_model(model, epochs, train_data, val_data, args):
                 label = torch.Tensor(label).unsqueeze(dim=0)
                 label = label.to(device)
 
-            pred = torch.sigmoid(pred)
             criterion.to(device)
 
             loss = criterion(pred, label)
