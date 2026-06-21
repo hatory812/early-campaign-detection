@@ -197,6 +197,7 @@ def load_split_data(data_path, rww_attr, node_attr):
     return train_data, test_data, val_data
 
 def predict(model, test_data, args):
+    model.eval()
     y_pred = []
     y_actual = []
     y_scores = []
@@ -239,6 +240,7 @@ def train_model(model, epochs, train_data, val_data, args):
     val_loss_epochs = []
 
     for epoch in range(epochs):
+        model.train()
         train_loss = 0
         val_loss = 0
         counter = 0
