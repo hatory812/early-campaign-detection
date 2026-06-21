@@ -466,3 +466,27 @@ if __name__ == '__main__':
         print(
             f"{all_mean[0]} ± {all_std[0]},{all_mean[1]} ± {all_std[1]},{all_mean[2]} ± {all_std[2]},{all_mean[3]} ± {all_std[3]}")
         # print(f"Time taken: {int(all_mean[4] // 60)}:{all_mean[4] % 60} ± {int(all_std[4] // 60)}:{all_std[4] % 60}")
+
+    # Persist the run configuration and metrics as JSON under results/.
+    if multivariate:
+        metric_names = ['accuracy', 'precision', 'recall', 'micro_f1', 'macro_f1']
+    else:
+        metric_names = ['accuracy', 'precision', 'recall', 'f1']
+
+    os.makedirs('results', exist_ok=True)
+    result_record = {
+        'args': vars(args),
+        'epochs': epochs,
+        'num_node_features': num_node_features,
+        'num_edge_features': num_edge_features,
+        'metric_names': metric_names,
+        'per_run': [[float(v) for v in run] for run in all_results],
+        'mean': {name: float(all_mean[i]) for i, name in enumerate(metric_names)},
+        'std': {name: float(all_std[i]) for i, name in enumerate(metric_names)},
+    }
+    out_path = os.path.join(
+        'results',
+        f"{model_name}_{rww_attr}_nodeattr{node_attr}_{args.data_type}_mv{multivariate}.json")
+    with open(out_path, 'w') as f:
+        json.dump(result_record, f, indent=2)
+    print(f"Saved results to {out_path}")
