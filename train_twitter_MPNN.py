@@ -363,7 +363,7 @@ if __name__ == '__main__':
     all_dir = args.all_graphs_path
     lr = float(args.lr)
     rww_attr = args.rww_attr
-    node_attr = args.node_attr
+    node_attr = int(args.node_attr)
 
     if args.data_type == 'small':
         data_path = small_dir
