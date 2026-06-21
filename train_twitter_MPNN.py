@@ -254,7 +254,9 @@ def train_model(model, epochs, train_data, val_data, args):
 
             pooled_output = global_mean_pool(pred, batch=None)
 
-            pred = F.softmax(model.out(pooled_output), dim=1)
+            # Raw logits: the loss functions (BCEWithLogitsLoss / CrossEntropyLoss)
+            # apply their own activation internally, so no softmax here.
+            pred = model.out(pooled_output)
             # Generate Labels
             label = None
             if (multivariate):

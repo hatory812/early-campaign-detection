@@ -22,8 +22,7 @@ class GCN_edge(torch.nn.Module):
         self.out = Sequential(
             LazyLinear(out_features=128),  # First lazy linear layer
             Sigmoid(),
-            LazyLinear(out_features=num_classes),  # Second lazy linear layer
-            Sigmoid()
+            LazyLinear(out_features=num_classes)  # Second lazy linear layer (raw logits)
         )
 
     def forward(self, x, edge_index, edge_attr):
@@ -39,8 +38,7 @@ class GCN_News(torch.nn.Module):
         self.dropout = Dropout(0.3)
 
         self.out = Sequential(
-            LazyLinear(out_features=num_classes),  # Second lazy linear layer
-            Sigmoid()
+            LazyLinear(out_features=num_classes)  # Second lazy linear layer (raw logits)
         )
 
     def forward(self, x, edge_index):
@@ -65,8 +63,7 @@ class GCN(torch.nn.Module):
         self.out = Sequential(
             LazyLinear(out_features=1024),  # First lazy linear layer
             Sigmoid(),  # Leaky ReLU activation
-            LazyLinear(out_features=num_classes),  # Second lazy linear layer
-            Sigmoid()
+            LazyLinear(out_features=num_classes)  # Second lazy linear layer (raw logits)
         )
 
         self.w_ktruss_network = Sequential(
