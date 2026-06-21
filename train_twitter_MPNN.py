@@ -215,7 +215,6 @@ def predict(model, test_data, args):
             pooled_output = global_mean_pool(pred, batch=None)
         pred = model.out(pooled_output)
         pred = F.softmax(pred, dim=1)
-        pred = torch.sigmoid(pred)
         labels = graph.y
         _, predictions = torch.max(pred, 1)
         if predictions.item() not in prediction_counter:
