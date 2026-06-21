@@ -14,7 +14,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 from torch_geometric.loader import DataLoader, NeighborLoader
 from torch_geometric.nn import GCNConv, GATConv, GINConv, GINEConv, SAGEConv
-from SimpleConv import SimpleConv
 from torch.nn import LazyLinear, Linear, Sequential, Dropout, LeakyReLU, Sigmoid
 import torch.optim as optim
 import random
