@@ -76,6 +76,11 @@ def get_rww(graph, pick, comp_parameter):
                         else:
                             weights = np.array([1-u_graph.nodes[nbr][attribute] for nbr in neighbors])
 
+                        # Min-max normalization can yield all-zero weights for a
+                        # neighborhood; fall back to a uniform distribution then.
+                        if weights.sum() == 0:
+                            weights = np.ones(len(neighbors))
+
                         next_node = random.choices(neighbors, weights=weights, k=1)
                         walk.append(next_node[0])
                 random_walks.append(walk)
@@ -89,9 +94,13 @@ def get_core_numbers(graph):
     u_graph.remove_edges_from(nx.selfloop_edges(u_graph))
 
     kcore = list(nx.core_number(u_graph).values())
-    kcore = [math.exp(x) for x in kcore]
-    kcore_sum = sum(kcore)
-    kcore = [float(x / kcore_sum) for x in kcore]
+    # Min-max normalize so density values fall in [0, 1] and are comparable
+    # to the threshold tau used in Algorithm 1 (DECODE).
+    kmin, kmax = min(kcore), max(kcore)
+    if kmax > kmin:
+        kcore = [float((x - kmin) / (kmax - kmin)) for x in kcore]
+    else:
+        kcore = [0.0 for _ in kcore]
 
     for idx, node in enumerate(u_graph.nodes()):
         graph.nodes[node]['kcore_value'] = kcore[idx]
@@ -117,9 +126,13 @@ def get_truss_numbers(graph, graph_name):
         else:
             truss_weights.append(0)
 
-    truss_weights = [math.exp(x) for x in truss_weights]
-    truss_sum = sum(truss_weights)
-    truss_weights = [float(x / truss_sum) for x in truss_weights]
+    # Min-max normalize so density values fall in [0, 1] and are comparable
+    # to the threshold tau used in Algorithm 1 (DECODE).
+    tmin, tmax = min(truss_weights), max(truss_weights)
+    if tmax > tmin:
+        truss_weights = [float((x - tmin) / (tmax - tmin)) for x in truss_weights]
+    else:
+        truss_weights = [0.0 for _ in truss_weights]
 
     for idx, node in enumerate(graph.nodes()):
         graph.nodes[node]['ktruss_value'] = truss_weights[idx]
@@ -133,11 +146,13 @@ def get_degree(graph):
     # Compute the degree of each node and apply the same exponential transformation
 
     degree = [u_graph.degree(node) for node in u_graph.nodes()]
-    degree = [1 / (1 + np.exp(-x)) for x in degree]
-    sum_d = sum(degree)
-    #print(f"Degree of node 6: {u_graph.degree(6)}")
-    # Apply Min-Max normalization
-    degree = [(x / sum_d) for x in degree]
+    # Min-max normalize so density values fall in [0, 1] and are comparable
+    # to the threshold tau used in Algorithm 1 (DECODE).
+    dmin, dmax = min(degree), max(degree)
+    if dmax > dmin:
+        degree = [float((x - dmin) / (dmax - dmin)) for x in degree]
+    else:
+        degree = [0.0 for _ in degree]
 
     for idx, node in enumerate(u_graph.nodes()):
         graph.nodes[node]['degree_value'] = degree[idx]
