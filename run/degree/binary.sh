@@ -26,7 +26,7 @@ gin_hl=512
 node_attr_gin=0
 python3 ../train_twitter_MPNN.py --model $m3 --data_type $data_type --multivariate $mv --hidden_dim $gin_hl --lr $gin_lr --output_dim $output_dim --small_graphs_path $small_dir --all_graphs_path $all_dir --rww_attr $rww --node_attr $node_attr_gin
 
-#GINE
+#SAGE
 m4="SAGE"
 gine_lr=0.0001
 gine_hl=1024
