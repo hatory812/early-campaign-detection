@@ -248,8 +248,7 @@ def train_model(model, epochs, train_data, val_data, args):
         for batch in loader:
             batch = batch.to(device)
             if args.model == "GINE":
-                x_val = batch.x.to(torch.int64)
-                pred = model(x_val, batch.edge_index, batch.edge_attr)
+                pred = model(batch.x, batch.edge_index, batch.edge_attr)
             else:
                 pred = model(batch.x, batch.edge_index)
 
