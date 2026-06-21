@@ -394,7 +394,9 @@ if __name__ == '__main__':
 
             label_counts = dict(sorted(label_counts.items()))
             label_counts = np.array(list(label_counts.values()))
-            weights = np.exp(-label_counts)
+            # Inverse-frequency class weights. The previous np.exp(-label_counts)
+            # underflowed to ~0 for all but the rarest class.
+            weights = label_counts.sum() / (len(label_counts) * label_counts)
             weights /= np.sum(weights)
             print(weights, label_counts)
             weights = torch.tensor(weights, dtype=torch.float32)
