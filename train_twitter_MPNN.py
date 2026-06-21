@@ -253,7 +253,7 @@ def train_model(model, epochs, train_data, val_data, args):
             else:
                 pred = model(graph.x, graph.edge_index)
 
-           pooled_output = global_mean_pool(pred, batch=None)
+            pooled_output = global_mean_pool(pred, batch=None)
 
             pred = F.softmax(model.out(pooled_output), dim=1)
             # Generate Labels
