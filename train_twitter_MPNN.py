@@ -202,30 +202,31 @@ def predict(model, test_data, args):
     y_actual = []
     y_scores = []
     prediction_counter = {}
-    for i in range(len(test_data)):
-        graph = test_data[i]
-        graph = graph.to(device)
-        if args.model == "GINE":
-            pred = model(graph.x, graph.edge_index, graph.edge_attr)
-        else:
-            pred = model(graph.x, graph.edge_index)
-        # pooled_output = global_mean_pool(pred, batch=None)
-        if args.model == 'GIN':
-            pooled_output = global_add_pool(pred, batch=None)
-        else:
-            pooled_output = global_mean_pool(pred, batch=None)
-        pred = model.out(pooled_output)
-        pred = F.softmax(pred, dim=1)
-        labels = graph.y
-        _, predictions = torch.max(pred, 1)
-        if predictions.item() not in prediction_counter:
-            prediction_counter[predictions.item()] = 1
-        else:
-            prediction_counter[predictions.item()] += 1
-        y_pred += predictions.tolist()
-        y_actual += labels.tolist()
-        y_scores += pred[:, 1].tolist()
-        # Load neighbours of each node to get a fair sample that can fit in the gpu
+    with torch.no_grad():
+        for i in range(len(test_data)):
+            graph = test_data[i]
+            graph = graph.to(device)
+            if args.model == "GINE":
+                pred = model(graph.x, graph.edge_index, graph.edge_attr)
+            else:
+                pred = model(graph.x, graph.edge_index)
+            # pooled_output = global_mean_pool(pred, batch=None)
+            if args.model == 'GIN':
+                pooled_output = global_add_pool(pred, batch=None)
+            else:
+                pooled_output = global_mean_pool(pred, batch=None)
+            pred = model.out(pooled_output)
+            pred = F.softmax(pred, dim=1)
+            labels = graph.y
+            _, predictions = torch.max(pred, 1)
+            if predictions.item() not in prediction_counter:
+                prediction_counter[predictions.item()] = 1
+            else:
+                prediction_counter[predictions.item()] += 1
+            y_pred += predictions.tolist()
+            y_actual += labels.tolist()
+            y_scores += pred[:, 1].tolist()
+            # Load neighbours of each node to get a fair sample that can fit in the gpu
     y_pred = np.array(y_pred)
     y_actual = np.array(y_actual)
     y_scores = np.array(y_scores)
