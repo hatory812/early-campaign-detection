@@ -236,7 +236,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     path = args.path
-    filename = convert_file_id_to_name(path, args.graphId)
     comp_parameter = args.comp
+
+    try:
+        filename = convert_file_id_to_name(path, args.graphId)
+    except KeyError:
+        print(f"Skipping graphId {args.graphId}: not found in graph_name_mapping.json")
+        sys.exit(0)
 
     run_model(filename, path, args.pick, comp_parameter)
