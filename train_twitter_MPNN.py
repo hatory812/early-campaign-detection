@@ -106,17 +106,17 @@ def process_data(files, graph_labels, exceptions, rww_attr, node_attr):
             y = [graph_label]
             y = torch.tensor(y)
             # x = torch.tensor([graph.nodes[node]['node_attr'] for node in graph.nodes()])
-            if rww_attr == 'core' and node_attr == 1:
+            if rww_attr == 'kcore' and node_attr == 1:
                 x = torch.tensor([graph.nodes[node]['node_attr'] + graph.nodes[node]['structural_embedding'] for node in graph.nodes()])
-            elif rww_attr == 'core' and node_attr == 0:
+            elif rww_attr == 'kcore' and node_attr == 0:
                 x = torch.tensor([graph.nodes[node]['structural_embedding'] for node in graph.nodes()])
             elif rww_attr == 'degree' and node_attr == 1:
                 x = torch.tensor([graph.nodes[node]['node_attr'] + graph.nodes[node]['degree_embedding'] for node in graph.nodes()])
             elif rww_attr == 'degree' and node_attr == 0:
                 x = torch.tensor([graph.nodes[node]['degree_embedding'] for node in graph.nodes()])
-            elif rww_attr == 'truss' and node_attr == 1:
+            elif rww_attr == 'ktruss' and node_attr == 1:
                 x = torch.tensor([graph.nodes[node]['node_attr'] + graph.nodes[node]['truss_embedding'] for node in graph.nodes()])
-            elif rww_attr == 'truss' and node_attr == 0:
+            elif rww_attr == 'ktruss' and node_attr == 0:
                 x = torch.tensor([graph.nodes[node]['truss_embedding'] for node in graph.nodes()])
             else:
                 x = torch.tensor([graph.nodes[node]['node_attr'] for node in graph.nodes()])
@@ -349,7 +349,7 @@ if __name__ == '__main__':
     parser.add_argument("--classify_news", default=0, help="Classify the news graphs")
     parser.add_argument("--small_graphs_path", help="Mention path to small graphs")
     parser.add_argument("--all_graphs_path", help="Mention path to all graphs")
-    parser.add_argument("--rww_attr", default="core", help="Mention what feature for rww")
+    parser.add_argument("--rww_attr", default="kcore", help="Mention what feature for rww")
     parser.add_argument("--node_attr", default="1", help="Mention whether node features should be used or not")
     args = parser.parse_args()
 
