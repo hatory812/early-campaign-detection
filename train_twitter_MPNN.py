@@ -139,7 +139,7 @@ def process_data(files, graph_labels, exceptions, rww_attr, node_attr):
     return data_list, label_list
 
 
-def load_split_data(data_path, rww_attr, node_attr):
+def load_split_data(data_path, rww_attr, node_attr, seed=None):
     print("Loading dataset.....")
 
     path = data_path
@@ -187,7 +187,8 @@ def load_split_data(data_path, rww_attr, node_attr):
         label_list = [1] * len(campaign_news_graphs) + [0] * len(campaign_news_graphs)
 
     train_data, test_data, train_labels, test_labels = train_test_split(data_list, label_list, stratify=label_list,
-                                                                        test_size=0.20, shuffle=True)
+                                                                        test_size=0.20, shuffle=True,
+                                                                        random_state=seed)
 
     random.shuffle(train_data)
 
@@ -367,61 +368,65 @@ if __name__ == '__main__':
     else:
         data_path = all_dir
 
-    train_data, test_data, val_data = load_split_data(data_path, rww_attr, node_attr)
-
-    if not multivariate:
-        criterion = BCEWithLogitsLoss()
-    else:
-        label_counts = dict()
-        for i in range(len(train_data)):
-            graph = train_data[i]
-            label = graph.y.tolist()[0]
-
-            if label not in label_counts:
-                label_counts[label] = 1
-            else:
-                label_counts[label] += 1
-
-        label_counts = dict(sorted(label_counts.items()))
-        label_counts = np.array(list(label_counts.values()))
-        weights = np.exp(-label_counts)
-        weights /= np.sum(weights)
-        print(weights, label_counts)
-        weights = torch.tensor(weights, dtype=torch.float32)
-        criterion = CrossEntropyLoss(weight=weights)
-
-    print(f"Length of training, testing datasets: {len(train_data)} {len(test_data)}")
-
-    print("Dataset loading done  ", data_path, len(train_data))
     epochs = 100
-
-    print(f"Number of node features: {num_node_features} and number of edge features :{num_edge_features}")
-
-    conv_dictionary = {'GCN': (GCNConv(num_node_features, hidden_channels), GCNConv(hidden_channels, hidden_channels)),
-
-                       'GAT': (GATConv(num_node_features, hidden_channels), GATConv(hidden_channels, hidden_channels)),
-
-                       'SAGE': (
-                       SAGEConv(num_node_features, hidden_channels), SAGEConv(hidden_channels, hidden_channels)),
-
-                       'GIN': (GINConv(Sequential(Linear(num_node_features, hidden_channels), nn.LeakyReLU(0.1),
-                                                  Linear(hidden_channels, hidden_channels), nn.LeakyReLU(0.1), ),
-                                       train_eps=True),
-                               GINConv(Sequential(Linear(hidden_channels, hidden_channels), nn.LeakyReLU(0.1), ),
-                                       train_eps=False)),
-
-                       'GINE': (GINEConv(Sequential(Linear(num_node_features, hidden_channels), nn.LeakyReLU(0.2),
-                                                    Linear(hidden_channels, hidden_channels), nn.LeakyReLU(0.2), ),
-                                         train_eps=True, edge_dim=num_edge_features),
-                                GINEConv(Sequential(Linear(hidden_channels, hidden_channels), nn.LeakyReLU(0.2),
-                                                    Linear(hidden_channels, hidden_channels), nn.LeakyReLU(0.2), ),
-                                         train_eps=True, edge_dim=num_edge_features))
-                       }
 
     all_results = []
     training_time = []
     for exp in range(0, 5):
         seed_everything(exp)
+
+        # Re-split the data for every run so the reported variance reflects
+        # split variability, not just weight initialisation.
+        train_data, test_data, val_data = load_split_data(data_path, rww_attr, node_attr, seed=exp)
+
+        if not multivariate:
+            criterion = BCEWithLogitsLoss()
+        else:
+            label_counts = dict()
+            for i in range(len(train_data)):
+                graph = train_data[i]
+                label = graph.y.tolist()[0]
+
+                if label not in label_counts:
+                    label_counts[label] = 1
+                else:
+                    label_counts[label] += 1
+
+            label_counts = dict(sorted(label_counts.items()))
+            label_counts = np.array(list(label_counts.values()))
+            weights = np.exp(-label_counts)
+            weights /= np.sum(weights)
+            print(weights, label_counts)
+            weights = torch.tensor(weights, dtype=torch.float32)
+            criterion = CrossEntropyLoss(weight=weights)
+
+        print(f"Length of training, testing datasets: {len(train_data)} {len(test_data)}")
+        print("Dataset loading done  ", data_path, len(train_data))
+        print(f"Number of node features: {num_node_features} and number of edge features :{num_edge_features}")
+
+        # num_node_features / num_edge_features are set during data loading, so the
+        # conv layers must be rebuilt per run.
+        conv_dictionary = {'GCN': (GCNConv(num_node_features, hidden_channels), GCNConv(hidden_channels, hidden_channels)),
+
+                           'GAT': (GATConv(num_node_features, hidden_channels), GATConv(hidden_channels, hidden_channels)),
+
+                           'SAGE': (
+                           SAGEConv(num_node_features, hidden_channels), SAGEConv(hidden_channels, hidden_channels)),
+
+                           'GIN': (GINConv(Sequential(Linear(num_node_features, hidden_channels), nn.LeakyReLU(0.1),
+                                                      Linear(hidden_channels, hidden_channels), nn.LeakyReLU(0.1), ),
+                                           train_eps=True),
+                                   GINConv(Sequential(Linear(hidden_channels, hidden_channels), nn.LeakyReLU(0.1), ),
+                                           train_eps=False)),
+
+                           'GINE': (GINEConv(Sequential(Linear(num_node_features, hidden_channels), nn.LeakyReLU(0.2),
+                                                        Linear(hidden_channels, hidden_channels), nn.LeakyReLU(0.2), ),
+                                             train_eps=True, edge_dim=num_edge_features),
+                                    GINEConv(Sequential(Linear(hidden_channels, hidden_channels), nn.LeakyReLU(0.2),
+                                                        Linear(hidden_channels, hidden_channels), nn.LeakyReLU(0.2), ),
+                                             train_eps=True, edge_dim=num_edge_features))
+                           }
+
         if model_name == "GINE":
             conv1 = conv_dictionary[model_name][0]
             conv2 = conv_dictionary[model_name][1]
