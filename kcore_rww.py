@@ -31,7 +31,7 @@ def remove_zn(graph, neighbors):
             zn.append(n)
 
     for n in zn:
-        neighbors.pop(n)
+        neighbors.remove(n)
 
     return neighbors
 
