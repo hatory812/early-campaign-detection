@@ -202,31 +202,27 @@ def predict(model, test_data, args):
     y_actual = []
     y_scores = []
     prediction_counter = {}
+    loader = DataLoader(test_data, batch_size=int(args.batch_size), shuffle=False)
     with torch.no_grad():
-        for i in range(len(test_data)):
-            graph = test_data[i]
-            graph = graph.to(device)
+        for batch in loader:
+            batch = batch.to(device)
             if args.model == "GINE":
-                pred = model(graph.x, graph.edge_index, graph.edge_attr)
+                pred = model(batch.x, batch.edge_index, batch.edge_attr)
             else:
-                pred = model(graph.x, graph.edge_index)
-            # pooled_output = global_mean_pool(pred, batch=None)
+                pred = model(batch.x, batch.edge_index)
             if args.model == 'GIN':
-                pooled_output = global_add_pool(pred, batch=None)
+                pooled_output = global_add_pool(pred, batch.batch)
             else:
-                pooled_output = global_mean_pool(pred, batch=None)
+                pooled_output = global_mean_pool(pred, batch.batch)
             pred = model.out(pooled_output)
             pred = F.softmax(pred, dim=1)
-            labels = graph.y
+            labels = batch.y
             _, predictions = torch.max(pred, 1)
-            if predictions.item() not in prediction_counter:
-                prediction_counter[predictions.item()] = 1
-            else:
-                prediction_counter[predictions.item()] += 1
+            for p in predictions.tolist():
+                prediction_counter[p] = prediction_counter.get(p, 0) + 1
             y_pred += predictions.tolist()
             y_actual += labels.tolist()
             y_scores += pred[:, 1].tolist()
-            # Load neighbours of each node to get a fair sample that can fit in the gpu
     y_pred = np.array(y_pred)
     y_actual = np.array(y_actual)
     y_scores = np.array(y_scores)
@@ -240,36 +236,34 @@ def train_model(model, epochs, train_data, val_data, args):
     train_loss_epochs = []
     val_loss_epochs = []
 
+    # Mini-batch loader; shuffle=True reshuffles every epoch.
+    loader = DataLoader(train_data, batch_size=int(args.batch_size), shuffle=True)
+
     for epoch in range(epochs):
         model.train()
         train_loss = 0
         val_loss = 0
         counter = 0
 
-        for i in range(len(train_data)):
-            graph = train_data[i]
-            graph = graph.to(device)
+        for batch in loader:
+            batch = batch.to(device)
             if args.model == "GINE":
-                x_val = torch.tensor(graph.x).to(torch.int64)
-                pred = model(x_val, graph.edge_index, graph.edge_attr)
+                x_val = batch.x.to(torch.int64)
+                pred = model(x_val, batch.edge_index, batch.edge_attr)
             else:
-                pred = model(graph.x, graph.edge_index)
+                pred = model(batch.x, batch.edge_index)
 
-            pooled_output = global_mean_pool(pred, batch=None)
+            pooled_output = global_mean_pool(pred, batch.batch)
 
             # Raw logits: the loss functions (BCEWithLogitsLoss / CrossEntropyLoss)
             # apply their own activation internally, so no softmax here.
             pred = model.out(pooled_output)
             # Generate Labels
-            label = None
             if (multivariate):
-                label = graph.y
-                label = label.to(device)
+                label = batch.y.to(device)
             else:
-                label = [0, 0]
-                label[graph.y.item()] = 1
-                label = torch.Tensor(label).unsqueeze(dim=0)
-                label = label.to(device)
+                # Per-graph one-hot targets for BCEWithLogitsLoss.
+                label = F.one_hot(batch.y, num_classes=2).float().to(device)
 
             criterion.to(device)
 
@@ -354,6 +348,7 @@ if __name__ == '__main__':
     parser.add_argument("--all_graphs_path", help="Mention path to all graphs")
     parser.add_argument("--rww_attr", default="kcore", help="Mention what feature for rww")
     parser.add_argument("--node_attr", default="1", help="Mention whether node features should be used or not")
+    parser.add_argument("--batch_size", default=32, help="Mini-batch size for training and inference")
     args = parser.parse_args()
 
     model_name = args.model  # model name
