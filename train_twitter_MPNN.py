@@ -89,10 +89,11 @@ def process_data(files, graph_labels, exceptions, rww_attr, node_attr):
     campaign_news_graphs = []
     noncampaign_news_graphs = []
 
-    for file in files:
+    total = len(files)
+    for i, file in enumerate(files):
         # Get the graph label
         file_name = file.split('/')[-1][:-5]
-        print(file_name, (file_name in exceptions))
+        print(f"\r{(i + 1) / total * 100:.1f}% {file_name}", end='', flush=True)
         if file_name not in exceptions and (file_name[:-9] in graph_labels):
             graph_label = graph_labels[file_name[:-9]]
             # label_counter[graph_label] += 1
@@ -136,6 +137,7 @@ def process_data(files, graph_labels, exceptions, rww_attr, node_attr):
             data.name = file_name
             data_list.append(data)
 
+    print()
     return data_list, label_list
 
 
