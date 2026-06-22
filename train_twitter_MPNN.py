@@ -139,14 +139,12 @@ def process_data(files, graph_labels, exceptions, rww_attr, node_attr):
     return data_list, label_list
 
 
-def load_split_data(data_path, rww_attr, node_attr, seed=None):
+def load_data(data_path, rww_attr, node_attr):
     print("Loading dataset.....")
 
     path = data_path
     label_path = "/hss01/A.hattori/all_graphs"
-    train_data = None
-    test_data = None
-    val_data = None
+
     if multivariate:
         files = list(glob.glob(path + '/*_campaign_fulldata.json'))
         files_news = list(glob.glob(path + '/news/*_fulldata.json'))
@@ -154,26 +152,27 @@ def load_split_data(data_path, rww_attr, node_attr, seed=None):
     else:
         files = list(glob.glob(path + '/*_fulldata.json'))
 
-    campaign_news_graphs = []
-    noncampaign_news_graphs = []
-
     if multivariate:
         with open(label_path + "/graph_labels_campaign.json", "r") as f:
             graph_labels = json.load(f)
-
     elif classify_news:
         with open(label_path + "/graph_labels_news.json", "r") as f:
             graph_labels = json.load(f)
-
     else:
         with open(label_path + "/graph_labels.json", "r") as f:
             graph_labels = json.load(f)
 
-    # label_counter = {1: 0, 0: 0}
     exceptions = ['graph_labels', "Gomis_noncampaign_fulldata", "#Hıdırellez_noncampaign_fulldata",
                 '35YaşŞartı_TorbaYasaya__2023-03-26_campaign_fulldata', 'Haluk_noncampaign_fulldata',
                 '#ErdenTimurSezonu_noncampaign_fulldata', 'Gustavo_noncampaign_fulldata']
     data_list, label_list = process_data(files, graph_labels, exceptions, rww_attr, node_attr)
+
+    return data_list, label_list
+
+
+def split_data(data_list, label_list, seed=None):
+    campaign_news_graphs = []
+    noncampaign_news_graphs = []
 
     if classify_news:
         for data in data_list:
@@ -181,22 +180,15 @@ def load_split_data(data_path, rww_attr, node_attr, seed=None):
                 campaign_news_graphs.append(data)
             else:
                 noncampaign_news_graphs.append(data)
-
-    # Labels set here
-    if classify_news:
         data_list = campaign_news_graphs + random.sample(noncampaign_news_graphs, len(campaign_news_graphs))
         label_list = [1] * len(campaign_news_graphs) + [0] * len(campaign_news_graphs)
 
     train_data, test_data, train_labels, test_labels = train_test_split(data_list, label_list, stratify=label_list,
                                                                         test_size=0.20, shuffle=True,
                                                                         random_state=seed)
-
     random.shuffle(train_data)
 
-
-
-
-    return train_data, test_data, val_data
+    return train_data, test_data, None
 
 def predict(model, test_data, args):
     model.eval()
@@ -371,6 +363,10 @@ if __name__ == '__main__':
 
     epochs = 100
 
+    data_list, label_list = load_data(data_path, rww_attr, node_attr)
+    print("Dataset loading done  ", data_path, len(data_list))
+    print(f"Number of node features: {num_node_features} and number of edge features :{num_edge_features}")
+
     all_results = []
     training_time = []
     for exp in range(0, 5):
@@ -378,7 +374,7 @@ if __name__ == '__main__':
 
         # Re-split the data for every run so the reported variance reflects
         # split variability, not just weight initialisation.
-        train_data, test_data, val_data = load_split_data(data_path, rww_attr, node_attr, seed=exp)
+        train_data, test_data, val_data = split_data(data_list, label_list, seed=exp)
 
         if not multivariate:
             criterion = BCEWithLogitsLoss()
@@ -404,8 +400,6 @@ if __name__ == '__main__':
             criterion = CrossEntropyLoss(weight=weights)
 
         print(f"Length of training, testing datasets: {len(train_data)} {len(test_data)}")
-        print("Dataset loading done  ", data_path, len(train_data))
-        print(f"Number of node features: {num_node_features} and number of edge features :{num_edge_features}")
 
         # num_node_features / num_edge_features are set during data loading, so the
         # conv layers must be rebuilt per run.
