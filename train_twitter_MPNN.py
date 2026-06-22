@@ -143,6 +143,7 @@ def load_split_data(data_path, rww_attr, node_attr, seed=None):
     print("Loading dataset.....")
 
     path = data_path
+    label_path = "/hss01/A.hattori/all_graphs"
     train_data = None
     test_data = None
     val_data = None
@@ -157,15 +158,15 @@ def load_split_data(data_path, rww_attr, node_attr, seed=None):
     noncampaign_news_graphs = []
 
     if multivariate:
-        with open(path + "/graph_labels_campaign.json", "r") as f:
+        with open(label_path + "/graph_labels_campaign.json", "r") as f:
             graph_labels = json.load(f)
 
     elif classify_news:
-        with open(path + "/graph_labels_news.json", "r") as f:
+        with open(label_path + "/graph_labels_news.json", "r") as f:
             graph_labels = json.load(f)
 
     else:
-        with open(path + "/graph_labels.json", "r") as f:
+        with open(label_path + "/graph_labels.json", "r") as f:
             graph_labels = json.load(f)
 
     # label_counter = {1: 0, 0: 0}
