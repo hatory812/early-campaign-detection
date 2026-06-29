@@ -36,7 +36,6 @@ def remove_zn(graph, neighbors):
     return neighbors
 
 def get_rww(graph, pick, comp_parameter):
-    print("Inside rww")
     u_graph = graph.to_undirected()
     u_graph.remove_edges_from(nx.selfloop_edges(u_graph))
 
