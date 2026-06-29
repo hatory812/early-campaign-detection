@@ -114,74 +114,90 @@
 | `--out_base` | `/hss01/A.hattori/rww_all_graphs_minimized` | 出力先ルート |
 | `--pick` | `degree` | 埋め込みの種類（degree固定） |
 | `--comp` | `mid` | RWWの比較パラメータ（mid固定） |
-| `--tw_list` | （後述） | 処理する t_w 値をカンマ区切りで指定（並列実行用） |
-| `--log_path` | `./log_precompute.txt` | スキップ・エラーのログ出力先 |
+| `--log_dir` | `/hss01/A.hattori/log` | ログ出力ディレクトリ（t_wごとに個別ファイル生成） |
 
-### スクリプト骨格
+### スクリプト構造
+
+```
+import multiprocessing as mp  ← 追加
+
+setup_logger()        ← 変更なし
+load_and_filter()     ← 変更なし（旧形式 'links' キーに対応済み）
+process_one_graph()   ← 変更なし（del + gc.collect() 済み）
+build_tw_values()     ← 変更なし
+
+process_tw()          ← 新規追加（Pool のワーカー関数）
+
+if __name__ == '__main__':   ← spawn モード必須のガード
+    main()
+```
+
+### 新規追加：`process_tw()` ワーカー関数
+
+`Pool.map` から呼ばれるトップレベル関数。
+logger はプロセス間で渡せないため内部でセットアップする。
 
 ```python
-# kcore_rww.py から流用する関数
-from kcore_rww import get_degree, get_rww, get_embedding
+def process_tw(args):
+    t_w, src_path, label_path, out_base, pick, comp, log_path = args
 
-def load_and_filter(file, t_w):
-    """元JSONを読み込み、t_w 分以内のエッジに絞った NetworkX DiGraph を返す."""
-    with open(file, 'r') as f:
-        data = json.load(f)
-    graph = nx.DiGraph(json_graph.node_link_graph(data))
-    mapping = {node: i for i, node in enumerate(graph.nodes())}
-    graph = nx.relabel_nodes(graph, mapping)
+    logger = setup_logger(log_path)  # ワーカー内で個別にセットアップ
 
-    # タイムスタンプでフィルタ
-    timestamps = [d['timestamp'] for _, _, d in graph.edges(data=True)]
-    t0 = min(timestamps)
-    threshold = t0 + t_w * 60
-    remove_edges = [(u, v) for u, v, d in graph.edges(data=True)
-                    if d['timestamp'] > threshold]
-    graph.remove_edges_from(remove_edges)
-
-    # 孤立ノード削除
-    isolates = list(nx.isolates(graph))
-    graph.remove_nodes_from(isolates)
-
-    if graph.number_of_edges() == 0:
-        return None  # スキップ対象
-    return graph
-
-def main():
-    # t_w リストの構築
-    tw_values = list(range(1, 61)) + list(range(120, 1441, 60))  # 83値
-
-    # --tw_list 指定時はその値のみ処理（並列実行用）
-    if args.tw_list:
-        tw_values = [int(x) for x in args.tw_list.split(',')]
-
-    files = glob(args.src_path + '/*_fulldata.json')
-    label_path = args.label_path + '/graph_labels.json'
-    with open(label_path) as f:
+    with open(os.path.join(label_path, 'graph_labels.json')) as f:
         graph_labels = json.load(f)
+    files = sorted(glob.glob(os.path.join(src_path, '*_fulldata.json')))
 
-    for t_w in tw_values:
-        out_dir = f"{args.out_base}/{t_w}min"
-        os.makedirs(out_dir, exist_ok=True)
+    out_dir = os.path.join(out_base, f'{t_w}min')
+    os.makedirs(out_dir, exist_ok=True)
+    logger.info(f"--- t_w={t_w}min start ---")
 
-        for file in files:
-            file_name = file.split('/')[-1][:-5]
-            if file_name in EXCEPTIONS or file_name[:-9] not in graph_labels:
-                continue
+    n_ok = n_existing = n_skip = 0
+    for file_path in files:
+        file_name = os.path.basename(file_path)[:-5]
+        if file_name in EXCEPTIONS or file_name[:-9] not in graph_labels:
+            continue
+        out_path = os.path.join(out_dir, file_name + '.json')
+        if os.path.exists(out_path):
+            n_existing += 1
+            continue  # 冪等性：既存ファイルはスキップ
+        success = process_one_graph(
+            file_path, file_name, t_w, out_dir, pick, comp, logger)
+        if success:
+            n_ok += 1
+        else:
+            n_skip += 1
 
-            graph = load_and_filter(file, t_w)
-            if graph is None:
-                log(f"SKIP t_w={t_w} {file_name}: 0 edges after filter")
-                continue
+    logger.info(f"t_w={t_w}min done: saved={n_ok}, "
+                f"already_exists={n_existing}, skipped/error={n_skip}")
+```
 
-            graph = get_degree(graph)               # ③
-            walks = get_rww(graph, 'degree', 'mid') # ④
-            graph = get_embedding(walks, graph, 'degree')  # ⑤
+### 改修：`main()` ティア別 `Pool.map`
 
-            out_json = nx.node_link_data(graph)
-            out_path = f"{out_dir}/{file_name}_fulldata.json"
-            with open(out_path, 'w') as f:
-                json.dump(out_json, f)
+```python
+if __name__ == '__main__':
+    mp.set_start_method('spawn')  # gensim との fork 相性問題を回避
+
+    # ... argparse は現状どおり ...
+
+    def make_args(tw_values):
+        return [
+            (tw, args.src_path, args.label_path, args.out_base,
+             args.pick, args.comp,
+             os.path.join(args.log_dir, f'precompute_tw{tw}.log'))
+            for tw in tw_values
+        ]
+
+    # ティア1：small（t_w=1〜20、同時10プロセス・メモリ小）
+    with mp.Pool(processes=10) as pool:
+        pool.map(process_tw, make_args(range(1, 21)))
+
+    # ティア2：medium（t_w=21〜60 + 120、同時5プロセス）
+    with mp.Pool(processes=5) as pool:
+        pool.map(process_tw, make_args(list(range(21, 61)) + [120]))
+
+    # ティア3：large（t_w=180〜1440、同時3プロセス・メモリ大）
+    with mp.Pool(processes=3) as pool:
+        pool.map(process_tw, make_args(range(180, 1441, 60)))
 ```
 
 ---
@@ -198,134 +214,102 @@ def main():
 
 ### 総計
 
-| ケース | t_w 数 | グラフ数 | 1処理 | 合計（概算） |
-|---|---|---|---|---|
-| 直列実行 | 83 | 300 | 平均30秒 | **約207時間**（現実的でない） |
-| 83並列（t_w単位） | 1ずつ | 300 | 平均30秒 | **約1.5時間/t_w**（計83ジョブ同時） |
-| 推奨：グラフ単位並列 | 1 t_w | 1ずつ | 平均30秒 | **約150分/t_w** → 並列で短縮 |
+| ケース | 同時プロセス数 | 合計（概算） |
+|---|---|---|
+| 直列実行 | 1 | **約207時間**（非現実的） |
+| Python multiprocessing ティア1（small） | 10 | 約15時間（t_w=1〜20） |
+| Python multiprocessing ティア2（medium） | 5 | 約25時間（t_w=21〜120） |
+| Python multiprocessing ティア3（large） | 3 | 約30時間（t_w=180〜1440） |
+| **合計（ティア逐次）** | | **約70時間** |
 
-→ **t_w × グラフ の2次元でジョブ配列化**（Slurm Job Array 推奨）
+※ ティアは順番に実行（tier1完了→tier2→tier3）のためメモリ使用量が重複しない。
 
 ---
 
 ## 7. 並列実行戦略
 
+### 採用方式：Python multiprocessing（標準ライブラリ）
+
+Slurm が使用不可（Singularity コンテナ内）のため、
+`multiprocessing.Pool` を用いて **t_w 単位でプロセス並列化**する。
+各ワーカーが1つの t_w を担当し、その t_w の約300グラフを逐次処理する。
+
+```
+メインプロセス
+    ├── Worker（t_w=1）  300グラフを逐次処理
+    ├── Worker（t_w=2）  300グラフを逐次処理
+    ├── ...
+    └── Worker（t_w=N）  300グラフを逐次処理
+        （最大N個まで同時実行）
+```
+
+### start method：spawn（必須）
+
+`fork`（Linux デフォルト）は gensim Word2Vec 内部のCスレッドと相性が悪く
+デッドロックの原因になるため、`spawn` を明示指定する。
+
+| | fork | spawn |
+|---|---|---|
+| 仕組み | 親プロセスをそのままコピー | 新しいPythonを起動してre-import |
+| 速度 | 速い | 遅い（起動コストは処理時間に対して無視できる） |
+| gensim との相性 | ❌ | ✅ |
+
 ### メモリ対策：ジョブ内の明示的解放
 
-各グラフ処理後に `del` + `gc.collect()` を呼び、gensim の Word2Vec モデルや
-NetworkX グラフオブジェクトがループをまたいで蓄積しないようにする。
+各グラフ処理後に `del` + `gc.collect()` を呼び、
+gensim の Word2Vec モデルや NetworkX グラフオブジェクトが
+ループをまたいで蓄積しないようにする（`process_one_graph()` の finally 節に実装済み）。
+
+### ティア分割：t_w の大きさに応じて Pool サイズを段階的に絞る
+
+t_w が大きいほど部分グラフがフルグラフに近づきメモリ使用量が増える。
+3ティアに分けて Pool サイズを変え、ティア同士は**順番に実行**することで
+メモリ使用量のピークを抑える。
+
+| ティア | t_w の範囲 | t_w 数 | Pool サイズ | メモリ目安 |
+|---|---|---|---|---|
+| small  | 1〜20 分    | 20 | 10 | 2 GB × 10 = 20 GB |
+| medium | 21〜60 分、120 分 | 41 | 5  | 6 GB × 5  = 30 GB |
+| large  | 180〜1440 分 | 22 | 3  | 16 GB × 3 = 48 GB |
+
+### 実行コマンド
+
+```bash
+cd /home/A.hattori/ECMLPKDD25
+source /home/A.hattori/myenv/bin/activate
+
+python3 precompute_minimized_embeddings.py \
+    --src_path   /hss01/A.hattori/all_graphs \
+    --label_path /hss01/A.hattori/all_graphs \
+    --out_base   /hss01/A.hattori/rww_all_graphs_minimized \
+    --pick degree --comp mid \
+    --log_dir    /hss01/A.hattori/log
+```
+
+### エラー検知
+
+`pool.map()` はワーカーで発生した例外を自動でメインプロセスに伝播するため、
+選択肢C（`&` + `wait`）と異なり失敗を見逃さない。
 
 ```python
-import gc
-
-for file in files:
-    graph = load_and_filter(file, t_w)
-    if graph is None:
-        continue
-    graph = get_degree(graph)
-    walks = get_rww(graph, 'degree', 'mid')
-    graph = get_embedding(walks, graph, 'degree')
-    save_json(graph, out_dir, file_name)
-
-    del graph, walks   # 明示的解放
-    gc.collect()       # gensim Word2Vec モデルも回収
+try:
+    with mp.Pool(processes=10) as pool:
+        pool.map(process_tw, make_args(range(1, 21)))
+except Exception as e:
+    print(f"ワーカーで例外発生: {e}")  # 自動でキャッチ
 ```
-
-### Slurm Job Array：ティア分割による同時実行数の制御
-
-t_w が大きいほど部分グラフがフルグラフに近づきメモリ使用量が増えるため、
-**t_w の大きさに応じてジョブ配列を3ティアに分割し**、それぞれ同時実行数と
-要求メモリを変えて投入する。
-
-| ティア | t_w の範囲 | ジョブ数 | 同時実行上限 | 要求メモリ |
-|---|---|---|---|---|
-| small  | 1〜20 分    | 20 | 10 | 2 GB |
-| medium | 21〜60 分、120 分 | 41 | 5  | 6 GB |
-| large  | 180〜1440 分 | 22 | 3  | 16 GB |
-
-#### ティア1：small（t_w = 1〜20）
-
-```bash
-#!/bin/bash
-#SBATCH --job-name=precomp_small
-#SBATCH --mem=2G
-# run/degree/precompute_small.sh
-
-TW_LIST=($(seq 1 1 20))
-TW=${TW_LIST[$SLURM_ARRAY_TASK_ID]}
-
-python3 ../../precompute_minimized_embeddings.py \
-    --src_path /hss01/A.hattori/all_graphs \
-    --out_base /hss01/A.hattori/rww_all_graphs_minimized \
-    --pick degree --comp mid \
-    --tw_list $TW
-
-# 投入コマンド
-# sbatch --array=0-19%10 precompute_small.sh
-```
-
-#### ティア2：medium（t_w = 21〜60、120）
-
-```bash
-#!/bin/bash
-#SBATCH --job-name=precomp_medium
-#SBATCH --mem=6G
-# run/degree/precompute_medium.sh
-
-TW_LIST=($(seq 21 1 60) 120)
-TW=${TW_LIST[$SLURM_ARRAY_TASK_ID]}
-
-python3 ../../precompute_minimized_embeddings.py \
-    --src_path /hss01/A.hattori/all_graphs \
-    --out_base /hss01/A.hattori/rww_all_graphs_minimized \
-    --pick degree --comp mid \
-    --tw_list $TW
-
-# 投入コマンド
-# sbatch --array=0-40%5 precompute_medium.sh
-```
-
-#### ティア3：large（t_w = 180〜1440）
-
-```bash
-#!/bin/bash
-#SBATCH --job-name=precomp_large
-#SBATCH --mem=16G
-# run/degree/precompute_large.sh
-
-TW_LIST=($(seq 180 60 1440))
-TW=${TW_LIST[$SLURM_ARRAY_TASK_ID]}
-
-python3 ../../precompute_minimized_embeddings.py \
-    --src_path /hss01/A.hattori/all_graphs \
-    --out_base /hss01/A.hattori/rww_all_graphs_minimized \
-    --pick degree --comp mid \
-    --tw_list $TW
-
-# 投入コマンド
-# sbatch --array=0-21%3 precompute_large.sh
-```
-
-#### 全ティアの一括投入
-
-```bash
-sbatch --array=0-19%10 run/degree/precompute_small.sh
-sbatch --array=0-40%5  run/degree/precompute_medium.sh
-sbatch --array=0-21%3  run/degree/precompute_large.sh
-```
-
-各ティアは独立して動くため、3コマンドを順番に投入すれば同時に走る。
-クラスタの空き状況に応じて `%N` の数値を調整すること。
 
 ### 動作確認用コマンド（小規模テスト）
 
 ```bash
-# t_w=60 のみ処理して出力 JSON を確認
+# t_w=1〜3 のみ Pool(3) で処理して動作確認
+# main() 内の make_args(range(1, 4)) に一時的に変更して実行
 python3 precompute_minimized_embeddings.py \
-    --src_path /hss01/A.hattori/all_graphs \
-    --out_base /hss01/A.hattori/rww_all_graphs_minimized \
+    --src_path   /hss01/A.hattori/all_graphs \
+    --label_path /hss01/A.hattori/all_graphs \
+    --out_base   /tmp/test_minimized \
     --pick degree --comp mid \
-    --tw_list 60
+    --log_dir    /tmp/log_test
 ```
 
 ---
@@ -355,9 +339,6 @@ JSONを直接 `load_data` する方式に切り替える。
 
 | ファイル | 種別 | 説明 |
 |---|---|---|
-| `precompute_minimized_embeddings.py` | スクリプト（新規） | 埋め込み再計算・保存 |
-| `run/degree/precompute_small.sh`   | 実行スクリプト（新規） | Slurm Job Array 投入用（t_w=1〜20、同時10、2GB） |
-| `run/degree/precompute_medium.sh`  | 実行スクリプト（新規） | Slurm Job Array 投入用（t_w=21〜120、同時5、6GB） |
-| `run/degree/precompute_large.sh`   | 実行スクリプト（新規） | Slurm Job Array 投入用（t_w=180〜1440、同時3、16GB） |
-| `/hss01/A.hattori/rww_all_graphs_minimized/{t_w}min/` | データ（83フォルダ） | 再計算済みグラフJSON |
-| `log_precompute.txt` | ログ | スキップ・エラー記録 |
+| `precompute_minimized_embeddings.py` | スクリプト（改修） | 埋め込み再計算・保存。multiprocessing によるティア並列化を内蔵 |
+| `/hss01/A.hattori/rww_all_graphs_minimized/{t_w}min/` | データ（83フォルダ） | 再計算済みグラフJSON（約24,900ファイル） |
+| `/hss01/A.hattori/log/precompute_tw{t_w}.log` | ログ（t_wごと） | スキップ・エラー記録（83ファイル） |

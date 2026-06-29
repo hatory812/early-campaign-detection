@@ -9,15 +9,20 @@ precompute_minimized_embeddings.py
   5. RWW -> Word2Vec で degree_embedding を再計算（未来情報リーク防止）
   6. rww_all_graphs_minimized/{t_w}min/ に保存
 
-出力フォーマットは rww_all_graphs/degree/mid/ と同じ nx.node_link_data 形式
-（'edges' キー）なので、train_twitter_snapshot.py がそのまま読める。
+並列化:
+  multiprocessing.Pool を使い t_w 単位でプロセス並列化する。
+  gensim Word2Vec との fork 相性問題を避けるため start method は spawn を使用。
+  t_w が大きいほどメモリ使用量が増えるため、ティア別に Pool サイズを段階的に絞る。
+    ティア1 small  (t_w=  1〜 20): Pool(10)
+    ティア2 medium (t_w= 21〜120): Pool( 5)
+    ティア3 large  (t_w=180〜1440): Pool( 3)
+  ティアは順番に実行するためメモリのピークが重複しない。
 
-メモリ対策:
-  - 各グラフ処理後に del graph, walks + gc.collect() で明示解放
-  - Slurm ティア分割により同時実行数を t_w の大きさに応じて制限
+実行例（本番）:
+  python3 precompute_minimized_embeddings.py
 
-実行例（動作確認）:
-  python3 precompute_minimized_embeddings.py --tw_list 5
+実行例（テスト：各ティアから1値ずつ確認）:
+  python3 precompute_minimized_embeddings.py --test_tw 5,40,300
 """
 
 import sys
@@ -27,6 +32,7 @@ import gc
 import glob
 import argparse
 import logging
+import multiprocessing as mp
 from datetime import datetime
 
 import networkx as nx
@@ -47,15 +53,20 @@ EXCEPTIONS = [
 ]
 
 
-def setup_logger(log_path):
+def setup_logger(log_path, also_stdout=True):
+    """
+    ロガーをセットアップして返す。
+    workers は also_stdout=False で呼ぶ（複数プロセスの stdout 混在を防ぐ）。
+    spawn モードでは各ワーカーがこの関数を呼ぶたびにクリーンな状態から始まる。
+    """
     os.makedirs(os.path.dirname(os.path.abspath(log_path)), exist_ok=True)
+    handlers = [logging.FileHandler(log_path, encoding='utf-8')]
+    if also_stdout:
+        handlers.append(logging.StreamHandler(sys.stdout))
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s %(levelname)s %(message)s',
-        handlers=[
-            logging.FileHandler(log_path, encoding='utf-8'),
-            logging.StreamHandler(sys.stdout),
-        ],
+        handlers=handlers,
     )
     return logging.getLogger(__name__)
 
@@ -92,7 +103,6 @@ def load_and_filter(file_path, t_w):
     ]
     graph.remove_edges_from(remove_edges)
 
-    # 孤立ノード削除
     isolates = list(nx.isolates(graph))
     graph.remove_nodes_from(isolates)
 
@@ -146,15 +156,66 @@ def process_one_graph(file_path, file_name, t_w, out_dir, pick, comp, logger):
         gc.collect()
 
 
-def build_tw_values(tw_list_str):
-    """--tw_list の文字列から t_w の整数リストを作る。未指定時は全83値。"""
-    if tw_list_str:
-        return [int(x.strip()) for x in tw_list_str.split(',')]
-    # 1..60（1分刻み）+ 120..1440（60分刻み）= 83値
-    return list(range(1, 61)) + list(range(120, 1441, 60))
+def process_tw(args):
+    """
+    Pool のワーカー関数。1つの t_w に対して全グラフを処理する。
+    spawn モードで起動されるため、logger はここで個別にセットアップする。
+    引数はタプルで受け取る（pool.map は1引数しか渡せないため）。
+    """
+    t_w, src_path, label_path, out_base, pick, comp, log_path = args
+
+    # ワーカーはファイルのみに記録（stdout は複数プロセスで混在するため）
+    logger = setup_logger(log_path, also_stdout=False)
+    logger.info(f"=== worker START t_w={t_w}min  {datetime.now()} ===")
+
+    with open(os.path.join(label_path, 'graph_labels.json'), 'r', encoding='utf-8') as f:
+        graph_labels = json.load(f)
+    files = sorted(glob.glob(os.path.join(src_path, '*_fulldata.json')))
+
+    out_dir = os.path.join(out_base, f'{t_w}min')
+    os.makedirs(out_dir, exist_ok=True)
+
+    n_ok = n_existing = n_skip = 0
+    for file_path in files:
+        file_name = os.path.basename(file_path)[:-5]  # '.json' を除去
+
+        if file_name in EXCEPTIONS:
+            continue
+        if file_name[:-9] not in graph_labels:
+            continue
+
+        out_path = os.path.join(out_dir, file_name + '.json')
+        if os.path.exists(out_path):
+            n_existing += 1
+            continue  # 冪等性：既存ファイルはスキップ
+
+        success = process_one_graph(
+            file_path, file_name, t_w, out_dir, pick, comp, logger)
+        if success:
+            n_ok += 1
+        else:
+            n_skip += 1
+
+    logger.info(
+        f"=== worker DONE  t_w={t_w}min  "
+        f"saved={n_ok}, already_exists={n_existing}, skipped/error={n_skip}  "
+        f"{datetime.now()} ==="
+    )
 
 
-def main():
+def make_args(tw_values, src_path, label_path, out_base, pick, comp, log_dir):
+    """Pool.map に渡す引数タプルのリストを生成する。"""
+    return [
+        (tw, src_path, label_path, out_base, pick, comp,
+         os.path.join(log_dir, f'precompute_tw{tw}.log'))
+        for tw in tw_values
+    ]
+
+
+if __name__ == '__main__':
+    # spawn モードを最初に宣言（gensim との fork 相性問題を回避）
+    mp.set_start_method('spawn')
+
     parser = argparse.ArgumentParser(
         description='Precompute degree embeddings on t_w-restricted subgraphs'
     )
@@ -169,70 +230,54 @@ def main():
                         help='Structural attribute for RWW (degree のみ使用)')
     parser.add_argument('--comp', default='mid',
                         help='RWW comparison parameter: mid / median / 0.5')
-    parser.add_argument('--tw_list', default=None,
-                        help='Comma-separated t_w values (e.g. "1,2,3"). '
-                             'Omit to process all 83 values.')
-    parser.add_argument('--log_path', default='./log_precompute.txt',
-                        help='Log file path')
+    parser.add_argument('--log_dir', default='/hss01/A.hattori/log',
+                        help='Log directory (one file per t_w: precompute_tw{t_w}.log)')
+    parser.add_argument('--test_tw', default=None,
+                        help='テスト用：処理する t_w をカンマ区切りで指定 (e.g. "5,40,300"). '
+                             '省略時は全83値をティア別 Pool で実行。')
     args = parser.parse_args()
 
-    logger = setup_logger(args.log_path)
-    logger.info(f"=== precompute_minimized_embeddings.py START {datetime.now()} ===")
-    logger.info(f"args: {vars(args)}")
+    os.makedirs(args.log_dir, exist_ok=True)
+    main_logger = setup_logger(
+        os.path.join(args.log_dir, 'precompute_main.log'), also_stdout=True)
+    main_logger.info(f"=== precompute_minimized_embeddings.py START {datetime.now()} ===")
+    main_logger.info(f"args: {vars(args)}")
 
-    tw_values = build_tw_values(args.tw_list)
-    logger.info(f"t_w values ({len(tw_values)} total): {tw_values}")
+    kw = dict(
+        src_path=args.src_path,
+        label_path=args.label_path,
+        out_base=args.out_base,
+        pick=args.pick,
+        comp=args.comp,
+        log_dir=args.log_dir,
+    )
 
-    label_file = os.path.join(args.label_path, 'graph_labels.json')
-    with open(label_file, 'r', encoding='utf-8') as f:
-        graph_labels = json.load(f)
+    if args.test_tw:
+        # テストモード：指定 t_w のみ Pool(1) で逐次実行
+        tw_values = [int(x.strip()) for x in args.test_tw.split(',')]
+        main_logger.info(f"TEST MODE: t_w={tw_values}, Pool(1)")
+        with mp.Pool(processes=1) as pool:
+            pool.map(process_tw, make_args(tw_values, **kw))
 
-    files = sorted(glob.glob(os.path.join(args.src_path, '*_fulldata.json')))
-    logger.info(f"Found {len(files)} JSON files in {args.src_path}")
+    else:
+        # 本番モード：ティア別 Pool（ティアは順番に実行してメモリピークを抑える）
 
-    for t_w in tw_values:
-        out_dir = os.path.join(args.out_base, f'{t_w}min')
-        os.makedirs(out_dir, exist_ok=True)
-        logger.info(f"--- t_w={t_w}min  out_dir: {out_dir} ---")
+        # ティア1 small：t_w=1〜20（同時10プロセス）
+        main_logger.info("--- Tier1 small  t_w=1..20  Pool(10) START ---")
+        with mp.Pool(processes=10) as pool:
+            pool.map(process_tw, make_args(range(1, 21), **kw))
+        main_logger.info("--- Tier1 small  DONE ---")
 
-        n_ok = n_existing = n_skip = n_err = 0
+        # ティア2 medium：t_w=21〜60, 120（同時5プロセス）
+        main_logger.info("--- Tier2 medium t_w=21..60,120  Pool(5) START ---")
+        with mp.Pool(processes=5) as pool:
+            pool.map(process_tw, make_args(list(range(21, 61)) + [120], **kw))
+        main_logger.info("--- Tier2 medium DONE ---")
 
-        for i, file_path in enumerate(files):
-            file_name = os.path.basename(file_path)[:-5]  # '.json' を除去
+        # ティア3 large：t_w=180〜1440（同時3プロセス）
+        main_logger.info("--- Tier3 large  t_w=180..1440  Pool(3) START ---")
+        with mp.Pool(processes=3) as pool:
+            pool.map(process_tw, make_args(range(180, 1441, 60), **kw))
+        main_logger.info("--- Tier3 large  DONE ---")
 
-            if file_name in EXCEPTIONS:
-                continue
-
-            # ラベルチェック: file_name = "xxx_fulldata" → [:-9] で "_fulldata" を除去
-            graph_key = file_name[:-9]
-            if graph_key not in graph_labels:
-                continue
-
-            print(f"\r  t_w={t_w:4d}min [{i+1:3d}/{len(files)}] {file_name[:55]}",
-                  end='', flush=True)
-
-            out_path = os.path.join(out_dir, file_name + '.json')
-            if os.path.exists(out_path):
-                n_existing += 1
-                continue  # 冪等性：既存ファイルはスキップ
-
-            success = process_one_graph(
-                file_path, file_name, t_w, out_dir,
-                args.pick, args.comp, logger
-            )
-            if success:
-                n_ok += 1
-            else:
-                n_skip += 1
-
-        print()
-        logger.info(
-            f"t_w={t_w}min done: saved={n_ok}, "
-            f"already_exists={n_existing}, skipped/error={n_skip}"
-        )
-
-    logger.info(f"=== ALL DONE {datetime.now()} ===")
-
-
-if __name__ == '__main__':
-    main()
+    main_logger.info(f"=== ALL DONE {datetime.now()} ===")
