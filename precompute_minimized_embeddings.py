@@ -102,6 +102,7 @@ def load_and_filter(file_path, t_w):
         if d.get('timestamp', 0) > threshold
     ]
     graph.remove_edges_from(remove_edges)
+    graph.remove_edges_from(nx.selfloop_edges(graph))
 
     isolates = list(nx.isolates(graph))
     graph.remove_nodes_from(isolates)
