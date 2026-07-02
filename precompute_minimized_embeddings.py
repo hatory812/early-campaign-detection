@@ -67,6 +67,7 @@ def setup_logger(log_path, also_stdout=True):
         level=logging.INFO,
         format='%(asctime)s %(levelname)s %(message)s',
         handlers=handlers,
+        force=True,
     )
     return logging.getLogger(__name__)
 
