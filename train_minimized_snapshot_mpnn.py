@@ -189,7 +189,7 @@ def main():
     parser.add_argument('--src_root', default='/hss01/A.hattori/rww_all_graphs_minimized',
                         help='t_w ディレクトリの親')
     parser.add_argument('--out_root',
-                        default='/home/A.hattori/ECMLPKDD25/results/20260705_時間幅1-60で埋め込み再計算した実験',
+                        default='/home/A.hattori/ECMLPKDD25/results/20260706_時間幅1-60で埋め込み再計算した実験_OutOfMemory回避',
                         help='t_wごとの作業ディレクトリの親。実結果は {out_root}/{t_w}min/results/ に生成される')
     parser.add_argument('--tw_min', type=int, default=1)
     parser.add_argument('--tw_max', type=int, default=60)
