@@ -15,7 +15,8 @@ precompute_minimized_embeddings.py
   t_w が大きいほどメモリ使用量が増えるため、ティア別に Pool サイズを段階的に絞る。
     ティア1 small  (t_w=  1〜 20): Pool(10)
     ティア2 medium (t_w= 21〜120): Pool( 5)
-    ティア3 large  (t_w=180〜1440): Pool( 3)
+    ティア3 large  (t_w=180〜900): Pool( 3)
+    ティア4 xlarge (t_w=960〜1440): Pool( 5)
   ティアは順番に実行するためメモリのピークが重複しない。
 
 実行例（本番）:
@@ -237,6 +238,9 @@ if __name__ == '__main__':
     parser.add_argument('--test_tw', default=None,
                         help='テスト用：処理する t_w をカンマ区切りで指定 (e.g. "5,40,300"). '
                              '省略時は全83値をティア別 Pool で実行。')
+    parser.add_argument('--test_workers', default=1, type=int,
+                        help='--test_tw 指定時の Pool プロセス数（既定1=逐次）。'
+                             '特定ティアを本番並列度で回す場合に使う。')
     args = parser.parse_args()
 
     os.makedirs(args.log_dir, exist_ok=True)
@@ -255,10 +259,11 @@ if __name__ == '__main__':
     )
 
     if args.test_tw:
-        # テストモード：指定 t_w のみ Pool(1) で逐次実行
+        # テストモード：指定 t_w のみ Pool(test_workers) で実行
         tw_values = [int(x.strip()) for x in args.test_tw.split(',')]
-        main_logger.info(f"TEST MODE: t_w={tw_values}, Pool(1)")
-        with mp.Pool(processes=1) as pool:
+        n_workers = max(1, args.test_workers)
+        main_logger.info(f"TEST MODE: t_w={tw_values}, Pool({n_workers})")
+        with mp.Pool(processes=n_workers) as pool:
             pool.map(process_tw, make_args(tw_values, **kw))
 
     else:
@@ -276,10 +281,16 @@ if __name__ == '__main__':
             pool.map(process_tw, make_args(list(range(21, 61)) + [120], **kw))
         main_logger.info("--- Tier2 medium DONE ---")
 
-        # ティア3 large：t_w=180〜1440（同時3プロセス）
-        main_logger.info("--- Tier3 large  t_w=180..1440  Pool(3) START ---")
+        # ティア3 large：t_w=180〜900（同時3プロセス）
+        main_logger.info("--- Tier3 large  t_w=180..900  Pool(3) START ---")
         with mp.Pool(processes=3) as pool:
-            pool.map(process_tw, make_args(range(180, 1441, 60), **kw))
+            pool.map(process_tw, make_args(range(180, 901, 60), **kw))
         main_logger.info("--- Tier3 large  DONE ---")
+
+        # ティア4 xlarge：t_w=960〜1440（同時5プロセス）
+        main_logger.info("--- Tier4 xlarge t_w=960..1440  Pool(5) START ---")
+        with mp.Pool(processes=5) as pool:
+            pool.map(process_tw, make_args(range(960, 1441, 60), **kw))
+        main_logger.info("--- Tier4 xlarge DONE ---")
 
     main_logger.info(f"=== ALL DONE {datetime.now()} ===")
