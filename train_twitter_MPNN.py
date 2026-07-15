@@ -37,8 +37,11 @@ import math
 import time
 from models import GCN, GCN_edge, GCN_News
 import pandas as pd
+import matplotlib
+matplotlib.use('Agg')  # Headless backend: safe for saving many figures on a server.
 import matplotlib.pyplot as plt
 import copy
+import re
 
 warnings.filterwarnings("ignore")
 
@@ -323,6 +326,65 @@ def getReport(y_pred, y_actual):
     plt.show()
 
 
+def save_graph_image(data, name, pred, actual, out_path):
+    """Draw one graph's network diagram and annotate it with the true label,
+    node count and edge count, then save to out_path."""
+    num_nodes = data.num_nodes
+    num_edges = int(data.edge_index.shape[1])
+
+    G = to_networkx(data, to_undirected=False)
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    # spring_layout is O(n^2) per iteration; fall back to the fast random layout
+    # for large graphs so saving every test graph doesn't stall.
+    if num_nodes <= 500:
+        pos = nx.spring_layout(G, seed=1)
+    else:
+        pos = nx.random_layout(G, seed=1)
+    nx.draw(G, pos, ax=ax, node_size=20, width=0.3, arrows=True,
+            with_labels=False, node_color='#1f77b4', edge_color='#999999')
+    ax.set_title(f"{name}\nactual={actual}  pred={pred}\n"
+                 f"nodes={num_nodes}  edges={num_edges}", fontsize=10)
+    ax.axis('off')
+    plt.savefig(out_path, dpi=100, bbox_inches='tight')
+    plt.close(fig)
+
+
+def log_and_visualize(test_data, y_pred, y_actual, run_dir):
+    """Log per-file predictions vs. ground truth and save a visualization of
+    each test graph into a folder named after its predicted label.
+
+    Relies on predict() using shuffle=False so that y_pred[i] / y_actual[i]
+    correspond to test_data[i].
+    """
+    os.makedirs(run_dir, exist_ok=True)
+    log_path = os.path.join(run_dir, 'predictions.log')
+
+    total = len(test_data)
+    with open(log_path, 'w') as logf:
+        logf.write("file_name\tpredicted\tactual\tcorrect\tnum_nodes\tnum_edges\n")
+        for i, data in enumerate(test_data):
+            name = getattr(data, 'name', f'graph_{i}')
+            pred = int(y_pred[i])
+            actual = int(y_actual[i])
+            num_nodes = data.num_nodes
+            num_edges = int(data.edge_index.shape[1])
+            correct = (pred == actual)
+
+            logf.write(f"{name}\t{pred}\t{actual}\t{correct}\t{num_nodes}\t{num_edges}\n")
+
+            # One folder per predicted label; index-prefixed, sanitized filename
+            # keeps names unique and filesystem-safe (keeps unicode word chars).
+            label_dir = os.path.join(run_dir, f'pred_{pred}')
+            os.makedirs(label_dir, exist_ok=True)
+            safe = re.sub(r'[^\w\-.#]', '_', name)
+            out_path = os.path.join(label_dir, f"{i:04d}_{safe}.png")
+            save_graph_image(data, name, pred, actual, out_path)
+
+            print(f"\r  Saving visualizations {i + 1}/{total}", end='', flush=True)
+    print(f"\n  Wrote predictions log and visualizations to {run_dir}")
+
+
 if __name__ == '__main__':
     print("Inside Main")
     # small_dir ="/projects/academic/erdem/atulanan/twitter_analytics/new_networks/fulldata/descriptive_data/small_encoder_final"
@@ -344,6 +406,9 @@ if __name__ == '__main__':
     parser.add_argument("--rww_attr", default="kcore", help="Mention what feature for rww")
     parser.add_argument("--node_attr", default="1", help="Mention whether node features should be used or not")
     parser.add_argument("--batch_size", default=32, help="Mini-batch size for training and inference")
+    parser.add_argument("--analysis_out",
+                        default="/home/A.hattori/ECMLPKDD25/results/20260715_時間幅0で埋め込み再計算した実験_テスト時のログを可視化",
+                        help="Base directory for per-test prediction logs and graph visualizations")
     args = parser.parse_args()
 
     model_name = args.model  # model name
@@ -371,6 +436,11 @@ if __name__ == '__main__':
 
     all_results = []
     training_time = []
+    # Per-setting subfolder under the fixed analysis base dir keeps the outputs of
+    # different models (run back-to-back by the launcher .sh) from overwriting.
+    analysis_base_dir = os.path.join(
+        args.analysis_out,
+        f"{model_name}_{rww_attr}_nodeattr{node_attr}_{args.data_type}_mv{multivariate}")
     for exp in range(0, 5):
         seed_everything(exp)
 
@@ -442,6 +512,10 @@ if __name__ == '__main__':
         model, train_loss_epochs, val_loss_epochs = train_model(model, epochs, train_data, val_data, args)
         y_pred, y_actual, y_scores = predict(model, test_data, args)
 
+        # Log per-file predictions vs. ground truth and save graph visualizations
+        # grouped by predicted label (shuffle=False in predict keeps order aligned).
+        run_dir = os.path.join(analysis_base_dir, f'exp{exp}')
+        log_and_visualize(test_data, y_pred, y_actual, run_dir)
 
         if (exp == 4):
             print(f"Prediction: {y_pred}")
