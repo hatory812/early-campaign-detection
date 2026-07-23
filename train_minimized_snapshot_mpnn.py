@@ -104,8 +104,13 @@ def get_available_memory_gb():
     return None
 
 
-def build_command(src_dir, args):
-    """train_twitter_MPNN.py 呼び出しコマンドを組み立てる。"""
+def build_command(src_dir, run_dir, args):
+    """train_twitter_MPNN.py 呼び出しコマンドを組み立てる。
+
+    --analysis_out を run_dir ({out_root}/{t_w}min) に固定して渡すことで、
+    予測ログ・可視化を t_w ごとに分離する (train_twitter_MPNN.py の既定は
+    t_w 非依存の固定パスのため、スイープ時は t_w 間で上書きされてしまう)。
+    """
     return [
         sys.executable, MPNN_SCRIPT,
         '--model', args.model,
@@ -119,6 +124,7 @@ def build_command(src_dir, args):
         '--rww_attr', args.rww_attr,
         '--node_attr', str(args.node_attr),
         '--batch_size', str(args.batch_size),
+        '--analysis_out', run_dir,
     ]
 
 
@@ -156,7 +162,7 @@ def process_tw(task):
         logger.info(f"SKIP t_w={t_w}: result already exists: {out_path}")
         return (t_w, 'skip_existing')
 
-    cmd = build_command(src_dir, args)
+    cmd = build_command(src_dir, run_dir, args)
 
     env = os.environ.copy()
     if args.force_cpu:
