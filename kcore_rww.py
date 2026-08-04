@@ -145,6 +145,9 @@ def get_degree(graph):
     # Compute the degree of each node and apply the same exponential transformation
 
     degree = [u_graph.degree(node) for node in u_graph.nodes()]
+    if not degree:
+        # Node-less graph: min()/max() below would raise. Nothing to normalize.
+        return graph
     # Min-max normalize so density values fall in [0, 1] and are comparable
     # to the threshold tau used in Algorithm 1 (DECODE).
     dmin, dmax = min(degree), max(degree)

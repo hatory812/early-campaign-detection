@@ -48,6 +48,10 @@ warnings.filterwarnings("ignore")
 data_path = None
 num_node_features = None
 num_edge_features = None
+
+# LEN データセットの edge_attr の次元数。エッジ0本のグラフでは実データから
+# 次元を決められないため、プレースホルダの空テンソルを作るのに使う。
+EDGE_ATTR_DIM = 776
 num_classes = None
 lr = None
 
@@ -127,8 +131,21 @@ def process_data(files, graph_labels, exceptions, rww_attr, node_attr):
 
             global num_edge_features, num_node_features
 
-            edge_index = torch.tensor([e for e in graph.edges], dtype=torch.long)
-            edge_attr = torch.tensor([graph.edges[edge]['edge_attr'] for edge in graph.edges()])
+            edges = list(graph.edges)
+            if edges:
+                edge_index = torch.transpose(
+                    torch.tensor(edges, dtype=torch.long), 0, 1)
+                edge_attr = torch.tensor(
+                    [graph.edges[edge]['edge_attr'] for edge in edges])
+            else:
+                # 時間幅を絞ったデータセットには「観測されたエッジが自己ループだけ」
+                # だったグラフが 0 エッジグラフとして含まれる
+                # (precompute_minimized_embeddings.py の docstring を参照)。
+                # torch.tensor([]) では shape が (0,) になり transpose できないので
+                # 形の揃った空テンソルを明示的に作る。メッセージパッシングは起きず、
+                # グラフ表現は node_attr のプーリングだけで決まる。
+                edge_index = torch.empty((2, 0), dtype=torch.long)
+                edge_attr = torch.empty((0, EDGE_ATTR_DIM))
 
             num_node_features = x.shape[1]
             num_edge_features = edge_attr.shape[1]
@@ -136,7 +153,6 @@ def process_data(files, graph_labels, exceptions, rww_attr, node_attr):
             data = Data(x=x, edge_index=edge_index, y=y)
             data.y = data.y.view(-1)
             data.edge_attr = edge_attr
-            data.edge_index = torch.transpose(data.edge_index, 0, 1)
             data.name = file_name
             data_list.append(data)
 
@@ -150,12 +166,15 @@ def load_data(data_path, rww_attr, node_attr):
     path = data_path
     label_path = "/hss01/A.hattori/all_graphs"
 
+    # glob の返す順序はファイルシステム依存で不定。split_data の train_test_split は
+    # リストの並び順に依存するため、ソートしないと時間幅 t_w ごとに（同じグラフ集合でも）
+    # train/test の中身が変わってしまい、t_w 間の比較が成立しない。
     if multivariate:
-        files = list(glob.glob(path + '/*_campaign_fulldata.json'))
-        files_news = list(glob.glob(path + '/news/*_fulldata.json'))
-        files_finance = list(glob.glob(path + '/finance/*_fulldata.json'))
+        files = sorted(glob.glob(path + '/*_campaign_fulldata.json'))
+        files_news = sorted(glob.glob(path + '/news/*_fulldata.json'))
+        files_finance = sorted(glob.glob(path + '/finance/*_fulldata.json'))
     else:
-        files = list(glob.glob(path + '/*_fulldata.json'))
+        files = sorted(glob.glob(path + '/*_fulldata.json'))
 
     if multivariate:
         with open(label_path + "/graph_labels_campaign.json", "r") as f:

@@ -9,6 +9,21 @@ precompute_minimized_embeddings.py
   5. RWW -> Word2Vec で degree_embedding を再計算（未来情報リーク防止）
   6. rww_all_graphs_minimized/{t_w}min/ に保存
 
+自己ループのみになるグラフの扱い:
+  t_w が小さいと「時間幅内に観測されたエッジが自己ループだけ」になるグラフがある
+  （実測: t_w=0 で 15件、t_w=60 で 2件）。自己ループは密度指標の定義から外すため
+  除去するが、そこでグラフごと捨てると t_w ごとに入力グラフ数が変わり
+  （293件〜308件）、時間幅間で精度を比較できなくなる。しかも脱落は campaign 側に
+  偏る（t_w=0 では 15件中 12件）ため、小さい t_w の精度が過大評価される。
+  そこで本スクリプトは、そうしたグラフを捨てずに
+    「自己ループの端点ノードだけを残した 0 エッジグラフ」
+  として保存する（degree_value=0、degree_embedding=ゼロベクトル）。
+  「この時間幅ではまだ他者との相互作用が観測されていない」を素直に表現でき、
+  全 t_w で入力グラフ数が 308 件に揃う。
+  なお 0 エッジグラフに対しては RWW / Word2Vec を呼ばない。語彙サイズ1で
+  gensim(hs=1) の Huffman木バグを踏んでハングするため
+  （詳細: code_report_and_plan/precompute_word2vec_hang_final_report.md）。
+
 並列化:
   multiprocessing.Pool を使い t_w 単位でプロセス並列化する。
   gensim Word2Vec との fork 相性問題を避けるため start method は spawn を使用。
@@ -53,6 +68,32 @@ EXCEPTIONS = [
     'Gustavo_noncampaign_fulldata',
 ]
 
+# kcore_rww.get_embedding の Word2Vec vector_size と一致させること。
+# 0 エッジグラフのゼロ埋め込みの次元数に使う。
+EMBEDDING_DIM = 128
+
+# pick -> (密度値の属性名, 埋め込みの属性名)。kcore_rww.py の命名に合わせる。
+ATTR_KEYS = {
+    'degree': ('degree_value', 'degree_embedding'),
+    'kcore': ('kcore_value', 'structural_embedding'),
+    'ktruss': ('ktruss_value', 'truss_embedding'),
+}
+
+
+def set_degenerate_attributes(graph, pick):
+    """
+    エッジ0本の退化グラフに、密度値0とゼロ埋め込みを直接付与する。
+
+    RWW / Word2Vec は呼ばない。ウォークが「長さ1のウォーク×ノード数」しか
+    生成されず語彙が退化するうえ、ノード1個のケースでは gensim(hs=1) の
+    Huffman木バグでプロセスがハングするため。
+    """
+    value_key, embedding_key = ATTR_KEYS[pick]
+    for n in graph.nodes():
+        graph.nodes[n][value_key] = 0.0
+        graph.nodes[n][embedding_key] = [0.0] * EMBEDDING_DIM
+    return graph
+
 
 def setup_logger(log_path, also_stdout=True):
     """
@@ -80,7 +121,10 @@ def load_and_filter(file_path, t_w):
     - all_graphs/ は旧 NetworkX 形式（'links' キー）なので edges='links' で読む。
     - エッジフィルタ後に孤立ノードを除去し、ノードを 0..N-1 へ再ラベルする。
       （get_embedding が range(graph.number_of_nodes()) でアクセスするため必須）
-    - エッジが 0 本になる場合は None を返す。
+    - 自己ループを除いた実エッジが 1 本も残らない場合は、自己ループの端点ノード
+      （= t_w 内に行動があったユーザ）だけを残した 0 エッジグラフを返す。
+      呼び出し側は graph.number_of_edges() == 0 で退化ケースを判定する。
+    - t_w 内にエッジが 1 本もない（自己ループすらない）場合のみ None を返す。
     """
     with open(file_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
@@ -104,13 +148,22 @@ def load_and_filter(file_path, t_w):
         if d.get('timestamp', 0) > threshold
     ]
     graph.remove_edges_from(remove_edges)
+
+    # 自己ループは密度指標(degree/kcore/ktruss)の定義から外すため常に除去するが、
+    # 端点だけは退化ケースの復元用に控えておく。
+    selfloop_nodes = {u for u, _ in nx.selfloop_edges(graph)}
     graph.remove_edges_from(nx.selfloop_edges(graph))
 
     isolates = list(nx.isolates(graph))
-    graph.remove_nodes_from(isolates)
-
-    if graph.number_of_edges() == 0:
-        return None
+    if graph.number_of_edges() > 0:
+        graph.remove_nodes_from(isolates)
+    else:
+        # 退化ケース: 実エッジが 1 本も残らなかった。グラフごと捨てると t_w ごとに
+        # 入力グラフ数が変わってしまうため、自己ループを持っていたノードだけ残した
+        # 0 エッジグラフとして返す（モジュール冒頭の docstring 参照）。
+        graph.remove_nodes_from([n for n in isolates if n not in selfloop_nodes])
+        if graph.number_of_nodes() == 0:
+            return None
 
     # ノードを 0..N-1 へ再ラベル（get_embedding の range() アクセスに必須）
     graph = nx.relabel_nodes(graph, {n: i for i, n in enumerate(graph.nodes())})
@@ -128,12 +181,30 @@ def process_one_graph(file_path, file_name, t_w, out_dir, pick, comp, logger):
     try:
         graph = load_and_filter(file_path, t_w)
         if graph is None:
-            logger.warning(f"SKIP t_w={t_w}  {file_name}: 0 edges after filter")
+            logger.warning(f"SKIP t_w={t_w}  {file_name}: no edges at all after filter")
             return False
 
-        graph = get_degree(graph)
-        walks = get_rww(graph, pick, comp)
-        graph = get_embedding(walks, graph, pick)
+        if graph.number_of_edges() == 0:
+            # 退化グラフ（自己ループのみ）: RWW / Word2Vec は呼ばずゼロ埋め込みを付ける
+            graph = set_degenerate_attributes(graph, pick)
+            logger.info(
+                f"DEGENERATE t_w={t_w}  {file_name}: "
+                f"self-loops only -> {graph.number_of_nodes()} nodes / 0 edges, zero embedding")
+        else:
+            graph = get_degree(graph)
+            walks = get_rww(graph, pick, comp)
+
+            # 防御的チェック: 語彙サイズ1の walks を Word2Vec に渡すと
+            # gensim(hs=1) の Huffman木バグでハングする。実エッジが残っていれば
+            # ノードは2個以上なので通常は起こらないが、念のためここで止める。
+            vocab = {node for walk in walks for node in walk}
+            if len(vocab) <= 1:
+                graph = set_degenerate_attributes(graph, pick)
+                logger.warning(
+                    f"DEGENERATE t_w={t_w}  {file_name}: vocabulary size {len(vocab)} "
+                    f"-> skipped Word2Vec, zero embedding")
+            else:
+                graph = get_embedding(walks, graph, pick)
 
         out_path = os.path.join(out_dir, file_name + '.json')
         graph_json = nx.node_link_data(graph)
