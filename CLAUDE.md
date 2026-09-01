@@ -45,6 +45,9 @@ cd run/degree && bash snapshot.sh
 # 学習なしで各 t_w の |V|,|E| 統計だけ出す
 cd run/degree && bash snapshot_size_report.sh
 
+# t_w ごとの結果 JSON を 1 本の集計 CSV にまとめる (掃引の後処理その 1)
+python3 aggregate_snapshot_results.py results/<実験ディレクトリ> --tw_min 0 --tw_max 60
+
 # 既存の集計 CSV から図を再生成 (--baseline で全 campaign 予測のベースラインを重ねる)
 python3 plot_snapshot_metrics.py results/<実験ディレクトリ> --metrics f1 accuracy --baseline
 
@@ -64,14 +67,28 @@ python3 plot_degree_histograms.py --t-w 1min 2min --jobs 8 --out-root results/<�
 
 ### ファイル名とラベルの対応
 
-グラフのファイル名は `<トピック名>_{campaign,noncampaign}_fulldata.json`。ラベル引きは `file_name[:-9]` (`_fulldata` を落とす) を `graph_labels.json` のキーにする、という約束が全スクリプトに散在している。壊れているグラフは各スクリプト内の `exceptions` リスト (`Gomis_noncampaign_fulldata` など 6 件) でスキップ。`graph_name_mapping.json` はグラフ名 → 連番 ID (1..323) の対応で、`kcore_rww.py --graphId` 実行用。
+グラフのファイル名は `<トピック名>_{campaign,noncampaign}_fulldata.json`。ラベル引きは `file_name[:-9]` (`_fulldata` を落とす) を `graph_labels.json` のキーにする、という約束が全スクリプトに散在している。壊れているグラフは各スクリプト内の `exceptions` / `EXCEPTIONS` リスト (`Gomis_noncampaign_fulldata` など 6 件) でスキップ。このリストは `train_twitter_MPNN.py` / `train_twitter_snapshot.py` / `precompute_minimized_embeddings.py` / `plot_snapshot_metrics.py` / `plot_degree_histograms.py` の **5 ファイルに複製されている**ので、除外対象を増減させるときは全部直すこと。`graph_name_mapping.json` はグラフ名 → 連番 ID (1..323) の対応で、`kcore_rww.py --graphId` 実行用。
+
+**既知のバグ: 除外リストが 1 件効いていない。** ディスク上のファイル名は Unicode NFD (`ş` = `s` + 結合セディーユ) だが、`.py` 中のリテラルは NFC で書かれているため、生の文字列比較では `35YaşŞartı_TorbaYasaya__2023-03-26_campaign_fulldata` が一致せず素通りする (`#Hıdırellez` の `ı` は単一コードポイントなので影響なし)。`unicodedata.normalize('NFC', ...)` を挟んでいるのは `plot_degree_histograms.py` だけで、学習側の 4 ファイルは未対応。過去の実験結果はこのグラフを含んだまま集計されている可能性がある。
 
 ### t_w 掃引の 2 経路 — 未来情報リークに注意
 
-* **`train_twitter_snapshot.py`** (main ブランチ): フルグラフ上で計算済みの埋め込みを**流用**し、タイムスタンプでエッジをマスクするだけ。JSON パースは 1 回で済むぶん速いが、**縮小グラフのノードがグラフ全体の情報を持つ埋め込みを保持したまま = 未来情報リーク**であることが実験途中で判明した (`results/20260627_.../intro.txt`)。トポロジ縮小の純粋効果を見る設定としてのみ有効。
-* **`precompute_minimized_embeddings.py` + `train_minimized_snapshot_mpnn.py`** (**`feature/each-embedding` ブランチにのみ存在**): 縮小後のグラフで RWW と Word2Vec を**再計算**してから `train_twitter_MPNN.py` を t_w ごとに subprocess 起動する。リークが無いのはこちら。2026-07 以降の `results/` はすべてこの経路。
+* **`train_twitter_snapshot.py`**: フルグラフ上で計算済みの埋め込みを**流用**し、タイムスタンプでエッジをマスクするだけ。JSON パースは 1 回で済むぶん速いが、**縮小グラフのノードがグラフ全体の情報を持つ埋め込みを保持したまま = 未来情報リーク**であることが実験途中で判明した (`results/20260627_.../intro.txt`)。トポロジ縮小の純粋効果を見る設定としてのみ有効。
+* **`precompute_minimized_embeddings.py` + `train_minimized_snapshot_mpnn.py`**: 縮小後のグラフで RWW と Word2Vec を**再計算**してから `train_twitter_MPNN.py` を t_w ごとに subprocess 起動する。リークが無いのはこちら。2026-07 以降の `results/` はすべてこの経路。掃引後の集計・作図は `aggregate_snapshot_results.py` → `plot_snapshot_metrics.py` の順。
 
-ブランチは並行して育っており main に統合されていない: `feature/each-embedding` に上記の再計算パイプライン、`feature/experimental-script` / `fix` は main より古い状態。`研究概要.md` と `code_report_and_plan/python_files_overview.md` は main にしか無い (後者は再計算パイプラインの説明も含むため、main の作業ツリーには存在しないファイルに言及している)。作業前に「どのブランチのどのスクリプトの話か」を必ず確認すること。
+### ブランチ構成
+
+2026-09-01 に `feature/each-embedding` を main へマージ (`b6a6778`) したため、**両経路とも main に揃っている**。それ以前の CLAUDE.md にあった「再計算パイプラインは feature ブランチにのみ存在」という制約は解消済み。
+
+| ブランチ | 位置づけ |
+|---|---|
+| `main` | 統合先。origin (`hatory812/early-campaign-detection`) へ push する |
+| `feature/each-embedding` | 縮小グラフでの埋め込み再計算パイプライン。`b6a6778` で main にマージ済み |
+| `feature/analysis-scripts` | 掃引結果の集計・作図 (`aggregate_snapshot_results.py`, `plot_snapshot_metrics.py`) と次数分布調査 (`degree_extract.py`, `plot_degree_histograms.py`)。fast-forward で main にマージ済み |
+
+かつて存在した `feature/experimental-script` (t_w 掃引の第 1 世代) と `fix` (上流コードの再現性バグ修正群) は、独自コミットを持たない履歴上の位置マーカーになっていたため削除した。両者の成果は main の履歴に含まれている。
+
+リモートは `origin` の 1 本だけで、フォーク元 `erdemUB/ECMLPKDD25` を追える remote は登録されていない (必要なら `git remote add upstream https://github.com/erdemUB/ECMLPKDD25.git`)。
 
 ### メモリ
 
