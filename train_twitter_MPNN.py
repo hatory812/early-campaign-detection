@@ -37,14 +37,21 @@ import math
 import time
 from models import GCN, GCN_edge, GCN_News
 import pandas as pd
+import matplotlib
+matplotlib.use('Agg')  # Headless backend: safe for saving many figures on a server.
 import matplotlib.pyplot as plt
 import copy
+import re
 
 warnings.filterwarnings("ignore")
 
 data_path = None
 num_node_features = None
 num_edge_features = None
+
+# LEN データセットの edge_attr の次元数。エッジ0本のグラフでは実データから
+# 次元を決められないため、プレースホルダの空テンソルを作るのに使う。
+EDGE_ATTR_DIM = 776
 num_classes = None
 lr = None
 
@@ -124,8 +131,21 @@ def process_data(files, graph_labels, exceptions, rww_attr, node_attr):
 
             global num_edge_features, num_node_features
 
-            edge_index = torch.tensor([e for e in graph.edges], dtype=torch.long)
-            edge_attr = torch.tensor([graph.edges[edge]['edge_attr'] for edge in graph.edges()])
+            edges = list(graph.edges)
+            if edges:
+                edge_index = torch.transpose(
+                    torch.tensor(edges, dtype=torch.long), 0, 1)
+                edge_attr = torch.tensor(
+                    [graph.edges[edge]['edge_attr'] for edge in edges])
+            else:
+                # 時間幅を絞ったデータセットには「観測されたエッジが自己ループだけ」
+                # だったグラフが 0 エッジグラフとして含まれる
+                # (precompute_minimized_embeddings.py の docstring を参照)。
+                # torch.tensor([]) では shape が (0,) になり transpose できないので
+                # 形の揃った空テンソルを明示的に作る。メッセージパッシングは起きず、
+                # グラフ表現は node_attr のプーリングだけで決まる。
+                edge_index = torch.empty((2, 0), dtype=torch.long)
+                edge_attr = torch.empty((0, EDGE_ATTR_DIM))
 
             num_node_features = x.shape[1]
             num_edge_features = edge_attr.shape[1]
@@ -133,7 +153,6 @@ def process_data(files, graph_labels, exceptions, rww_attr, node_attr):
             data = Data(x=x, edge_index=edge_index, y=y)
             data.y = data.y.view(-1)
             data.edge_attr = edge_attr
-            data.edge_index = torch.transpose(data.edge_index, 0, 1)
             data.name = file_name
             data_list.append(data)
 
@@ -147,12 +166,15 @@ def load_data(data_path, rww_attr, node_attr):
     path = data_path
     label_path = "/hss01/A.hattori/all_graphs"
 
+    # glob の返す順序はファイルシステム依存で不定。split_data の train_test_split は
+    # リストの並び順に依存するため、ソートしないと時間幅 t_w ごとに（同じグラフ集合でも）
+    # train/test の中身が変わってしまい、t_w 間の比較が成立しない。
     if multivariate:
-        files = list(glob.glob(path + '/*_campaign_fulldata.json'))
-        files_news = list(glob.glob(path + '/news/*_fulldata.json'))
-        files_finance = list(glob.glob(path + '/finance/*_fulldata.json'))
+        files = sorted(glob.glob(path + '/*_campaign_fulldata.json'))
+        files_news = sorted(glob.glob(path + '/news/*_fulldata.json'))
+        files_finance = sorted(glob.glob(path + '/finance/*_fulldata.json'))
     else:
-        files = list(glob.glob(path + '/*_fulldata.json'))
+        files = sorted(glob.glob(path + '/*_fulldata.json'))
 
     if multivariate:
         with open(label_path + "/graph_labels_campaign.json", "r") as f:
@@ -323,6 +345,65 @@ def getReport(y_pred, y_actual):
     plt.show()
 
 
+def save_graph_image(data, name, pred, actual, out_path):
+    """Draw one graph's network diagram and annotate it with the true label,
+    node count and edge count, then save to out_path."""
+    num_nodes = data.num_nodes
+    num_edges = int(data.edge_index.shape[1])
+
+    G = to_networkx(data, to_undirected=False)
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    # spring_layout is O(n^2) per iteration; fall back to the fast random layout
+    # for large graphs so saving every test graph doesn't stall.
+    if num_nodes <= 500:
+        pos = nx.spring_layout(G, seed=1)
+    else:
+        pos = nx.random_layout(G, seed=1)
+    nx.draw(G, pos, ax=ax, node_size=20, width=0.3, arrows=True,
+            with_labels=False, node_color='#1f77b4', edge_color='#999999')
+    ax.set_title(f"{name}\nactual={actual}  pred={pred}\n"
+                 f"nodes={num_nodes}  edges={num_edges}", fontsize=10)
+    ax.axis('off')
+    plt.savefig(out_path, dpi=100, bbox_inches='tight')
+    plt.close(fig)
+
+
+def log_and_visualize(test_data, y_pred, y_actual, run_dir):
+    """Log per-file predictions vs. ground truth and save a visualization of
+    each test graph into a folder named after its predicted label.
+
+    Relies on predict() using shuffle=False so that y_pred[i] / y_actual[i]
+    correspond to test_data[i].
+    """
+    os.makedirs(run_dir, exist_ok=True)
+    log_path = os.path.join(run_dir, 'predictions.log')
+
+    total = len(test_data)
+    with open(log_path, 'w') as logf:
+        logf.write("file_name\tpredicted\tactual\tcorrect\tnum_nodes\tnum_edges\n")
+        for i, data in enumerate(test_data):
+            name = getattr(data, 'name', f'graph_{i}')
+            pred = int(y_pred[i])
+            actual = int(y_actual[i])
+            num_nodes = data.num_nodes
+            num_edges = int(data.edge_index.shape[1])
+            correct = (pred == actual)
+
+            logf.write(f"{name}\t{pred}\t{actual}\t{correct}\t{num_nodes}\t{num_edges}\n")
+
+            # One folder per predicted label; index-prefixed, sanitized filename
+            # keeps names unique and filesystem-safe (keeps unicode word chars).
+            label_dir = os.path.join(run_dir, f'pred_{pred}')
+            os.makedirs(label_dir, exist_ok=True)
+            safe = re.sub(r'[^\w\-.#]', '_', name)
+            out_path = os.path.join(label_dir, f"{i:04d}_{safe}.png")
+            save_graph_image(data, name, pred, actual, out_path)
+
+            print(f"\r  Saving visualizations {i + 1}/{total}", end='', flush=True)
+    print(f"\n  Wrote predictions log and visualizations to {run_dir}")
+
+
 if __name__ == '__main__':
     print("Inside Main")
     # small_dir ="/projects/academic/erdem/atulanan/twitter_analytics/new_networks/fulldata/descriptive_data/small_encoder_final"
@@ -344,6 +425,9 @@ if __name__ == '__main__':
     parser.add_argument("--rww_attr", default="kcore", help="Mention what feature for rww")
     parser.add_argument("--node_attr", default="1", help="Mention whether node features should be used or not")
     parser.add_argument("--batch_size", default=32, help="Mini-batch size for training and inference")
+    parser.add_argument("--analysis_out",
+                        default="/home/A.hattori/ECMLPKDD25/results/20260715_時間幅0で埋め込み再計算した実験_テスト時のログを可視化",
+                        help="Base directory for per-test prediction logs and graph visualizations")
     args = parser.parse_args()
 
     model_name = args.model  # model name
@@ -371,6 +455,11 @@ if __name__ == '__main__':
 
     all_results = []
     training_time = []
+    # Per-setting subfolder under the fixed analysis base dir keeps the outputs of
+    # different models (run back-to-back by the launcher .sh) from overwriting.
+    analysis_base_dir = os.path.join(
+        args.analysis_out,
+        f"{model_name}_{rww_attr}_nodeattr{node_attr}_{args.data_type}_mv{multivariate}")
     for exp in range(0, 5):
         seed_everything(exp)
 
@@ -442,6 +531,10 @@ if __name__ == '__main__':
         model, train_loss_epochs, val_loss_epochs = train_model(model, epochs, train_data, val_data, args)
         y_pred, y_actual, y_scores = predict(model, test_data, args)
 
+        # Log per-file predictions vs. ground truth and save graph visualizations
+        # grouped by predicted label (shuffle=False in predict keeps order aligned).
+        run_dir = os.path.join(analysis_base_dir, f'exp{exp}')
+        log_and_visualize(test_data, y_pred, y_actual, run_dir)
 
         if (exp == 4):
             print(f"Prediction: {y_pred}")

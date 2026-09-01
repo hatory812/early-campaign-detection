@@ -36,7 +36,6 @@ def remove_zn(graph, neighbors):
     return neighbors
 
 def get_rww(graph, pick, comp_parameter):
-    print("Inside rww")
     u_graph = graph.to_undirected()
     u_graph.remove_edges_from(nx.selfloop_edges(u_graph))
 
@@ -146,6 +145,9 @@ def get_degree(graph):
     # Compute the degree of each node and apply the same exponential transformation
 
     degree = [u_graph.degree(node) for node in u_graph.nodes()]
+    if not degree:
+        # Node-less graph: min()/max() below would raise. Nothing to normalize.
+        return graph
     # Min-max normalize so density values fall in [0, 1] and are comparable
     # to the threshold tau used in Algorithm 1 (DECODE).
     dmin, dmax = min(degree), max(degree)
@@ -163,12 +165,13 @@ def get_embedding(walks, graph, pick):
     model = Word2Vec(
         walks,
         hs=1,
+        negative=0,
         alpha=0.0001,
         epochs=100,
         vector_size=128,
         window=5,
         min_count=1,
-        workers=4,
+        workers=1,
         seed=42,
     )
     embedding = []
