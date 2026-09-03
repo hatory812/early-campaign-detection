@@ -101,3 +101,84 @@ python3 copy_test_degree_histograms.py \
    `ls <出力先> | wc -l` と `predictions.log` の行数 - 1 - 欠落件数 が一致することを確認する。
 3. 出力された PNG 名の集合が `predictions.log` の `file_name` の部分集合であることを確認する
    (余計なグラフが混ざっていないことの確認)。
+
+---
+
+# 改訂 (2026-09-03): 予測値による pred_0 / pred_1 への分類
+
+初版は `degree_distribution_<exp>/` に画像を平置きしていた。これを **テスト時の予測値で
+2 つのサブフォルダに振り分ける**よう変更する。同じスクリプトの責務なので計画書も本ファイルに続ける。
+
+## 変更後の出力構造
+
+```
+<pred_root>/<t_w>min/results/degree_distribution_exp2/
+├── pred_0/   ← predictions.log の predicted == 0 のグラフ
+└── pred_1/   ← predictions.log の predicted == 1 のグラフ
+```
+
+振り分けの根拠は `<t_w>min/GCN_degree_nodeattr1_all_mv0/exp2/predictions.log` の
+**`predicted` 列**（`actual` ではない）。`predicted` に現れる値は `0` と `1` のみで、
+欠損や第 3 の値が無いことは全 53 t_w で確認済み。
+
+## 処理手順 (t_w ごと)
+
+1. `predictions.log` を読み、`file_name` → `predicted` の対応を作る（初版の手順 1 と同じ読み取りで、
+   `predicted` 列を追加で保持するだけ）。
+2. 出力先に `pred_0/` と `pred_1/` を作る。
+3. `per_graph/<file_name>.png` を `degree_distribution_exp2/pred_<predicted>/` へコピーする。
+   ファイル名は変更しない。
+4. 旧構造の後始末として、`degree_distribution_exp2/` **直下**に残っている `*.png` を削除する。
+
+## 初版の出力の扱い
+
+既に 3,232 枚が平置きされている。これは削除して、コピーし直す。
+
+* 削除対象は `degree_distribution_exp2/` 直下の `*.png` のみ。`pred_0/` `pred_1/` の中は触らない
+  （再帰削除はしない）。
+* コピー元 (`20260804_.../<t_w>min/per_graph/`) は無傷なので、消しても再生成できる。
+* 移動 (`os.replace`) ではなくコピーし直す方式にする。スクリプトを「毎回コピー元から作り直す」
+  1 本の処理に保てて、途中で止めても再実行すれば同じ状態に収束するため。
+  再コピーは 119 MB なのでコストは無視できる。
+
+## 想定される振り分け結果
+
+`predictions.log` から事前に集計した（画像が存在する = エッジ 1 本以上のグラフのみ対象）。
+
+| 出力先 | 合計 | t_w あたり |
+|---|---|---|
+| `pred_0/` | 1,071 枚 | 13〜33 枚 |
+| `pred_1/` | 2,161 枚 | 28〜48 枚 |
+| 合計 | 3,232 枚 | 初版のコピー枚数と一致 |
+
+`pred_1` に偏るのはモデルが campaign 寄りに予測しているためで、初版の結果と総数が一致することが
+振り分けの正しさの確認になる。
+
+## 初版から引き継ぐ前提（変更なし）
+
+* 対象は 53 t_w。`t_w = 16, 18, 22, 28, 30, 31, 32, 40` は CUDA OOM で `predictions.log` が無くスキップ。
+* エッジ 0 本のグラフは `per_graph` に画像が無い（54 件）。これらはどちらのフォルダにも入らない。
+  `num_edges == 0` で説明できない欠落が出たら警告する。
+* ファイル名の照合は素の一致 → 失敗時に NFC 正規化で再照合。
+
+## 学習側の pred_0 / pred_1 との違い（混同しないための注記）
+
+`<t_w>min/GCN_degree_nodeattr1_all_mv0/exp2/` の下にも `train_twitter_MPNN.py` が作った
+同名の `pred_0/` `pred_1/` が既にある。そちらは **カスケードグラフそのものの可視化**で、
+ファイル名も `0008_#HaramBahc_eKollanıyor_noncampaign_fulldata.png` のように
+連番プレフィックス付き・非 ASCII を置換した形になっている。
+
+本スクリプトが作るのは **次数分布ヒストグラム**で、ファイル名は `predictions.log` の
+`file_name` をそのまま使う。分類基準 (`predicted`) は同じなので、
+同じ t_w の `pred_0` 同士は同じグラフ集合を指す。名前の付け方は揃えない
+（`predictions.log` と直接突き合わせられる方を優先する）。
+
+## 検証
+
+1. `--dry_run` で、各 t_w の `pred_0` + `pred_1` の予定枚数が初版のコピー枚数（60〜62）と
+   一致し、合計が 1,071 / 2,161 になることを確認する。
+2. 実行後、各 t_w について `pred_0/` `pred_1/` の実ファイル数が `predictions.log` を
+   `predicted` と `num_edges > 0` で数えた件数と一致することを確認する。
+3. `degree_distribution_exp2/` 直下に `*.png` が 1 枚も残っていないことを確認する。
+4. 出力された PNG 名の集合が、それぞれ対応する `predicted` の `file_name` の部分集合であることを
+   確認する（振り分け先を取り違えていないことの確認）。
