@@ -19,7 +19,7 @@
 - **対策**: `train_twitter_MPNN.py` は改変せず、t_w ごとに**別々の作業ディレクトリ (cwd)** を指定して `subprocess` として起動する。相対パス `results/...` はその cwd 基準で解決されるため、自動的に t_w ごとの出力先に分離できる。
 
 ### メモリ・GPUに関する既知のリスク（★安全なプロセス数決定に直結）
-- `code_report_and_plan/snapshot_oom_investigation.md` に記録の通り、過去に `train_twitter_snapshot.py` がホストの物理メモリを食い尽くし、**OOM killer が同一セッションスコープの tmux ごと巻き添えで kill**した実績がある。
+- `code_report_and_plan/[Report]snapshot_oom_investigation.md` に記録の通り、過去に `train_twitter_snapshot.py` がホストの物理メモリを食い尽くし、**OOM killer が同一セッションスコープの tmux ごと巻き添えで kill**した実績がある。
 - 現在のホストメモリ状況（計画作成時点で確認）:
   - `free -h`: total 119Gi, **available は約6.8Gi** と非常に逼迫（他要因で埋まっている可能性）。Swap 15Gi中8.7Gi使用済み。
   - `nproc`: 20（論理コア数上は多重実行が可能に見えるが、メモリがボトルネック）。

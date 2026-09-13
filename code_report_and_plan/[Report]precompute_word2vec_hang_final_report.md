@@ -1,11 +1,11 @@
 # `precompute_minimized_embeddings.py` 実行停止（ハング）の最終原因調査レポート
 
 調査日: 2026-07-01
-関連ドキュメント: [word2vec_thread_crash_investigation.md](word2vec_thread_crash_investigation.md)（tmux上のエラー出力に関する先行調査）
+関連ドキュメント: [[Report]word2vec_thread_crash_investigation.md]([Report]word2vec_thread_crash_investigation.md)（tmux上のエラー出力に関する先行調査）
 
 ## 概要
 
-`python3 precompute_minimized_embeddings.py --test_tw 5,40,300`（テストモード、Pool(1)）を実行したところ、tmux 上に散発的な gensim 由来の `TypeError` が出力される事象が確認された（先行調査: [word2vec_thread_crash_investigation.md](word2vec_thread_crash_investigation.md)）。
+`python3 precompute_minimized_embeddings.py --test_tw 5,40,300`（テストモード、Pool(1)）を実行したところ、tmux 上に散発的な gensim 由来の `TypeError` が出力される事象が確認された（先行調査: [[Report]word2vec_thread_crash_investigation.md]([Report]word2vec_thread_crash_investigation.md)）。
 
 先行調査ではこの事象を「ワーカーログにも `try/except` にも記録されないサイレント障害」と結論づけていたが、実行中プロセスを `/hss01/A.hattori/log` のログおよび `ps` で追跡した結果、**実際にはサイレント障害にとどまらず、パイプライン全体がハングして完全に停止する**ことが確認された。本レポートは両方の調査結果を統合した最終結論と修正方針をまとめる。
 
@@ -23,7 +23,7 @@
 
 ## 根本原因（先行調査の要約）
 
-詳細は [word2vec_thread_crash_investigation.md](word2vec_thread_crash_investigation.md) を参照。要点のみ以下に記す。
+詳細は [[Report]word2vec_thread_crash_investigation.md]([Report]word2vec_thread_crash_investigation.md) を参照。要点のみ以下に記す。
 
 1. `load_and_filter`（`precompute_minimized_embeddings.py:74`）の孤立ノード除去は `nx.isolates()` を使うが、**自己ループのみを持つノードを孤立ノードと判定できない**（自己ループがあると次数が0にならないため）。
 2. そのため t_w フィルタ後に「自己ループしか残らないノード1個」の部分グラフが有効なグラフとして通過してしまう。

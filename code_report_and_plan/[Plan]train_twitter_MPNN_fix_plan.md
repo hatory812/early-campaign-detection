@@ -1,7 +1,7 @@
 # 実装計画: `train_twitter_MPNN.py` の修正（問題4・9を除く）
 
 対象ファイル: `train_twitter_MPNN.py`, `models.py`
-方針: レビュー (`train_twitter_MPNN_review.md`) で挙げた問題のうち、**④検証セット追加** と **⑨`getReport` のラベル改変** を除く全てを修正する。
+方針: レビュー (`[Report]train_twitter_MPNN_review.md`) で挙げた問題のうち、**④検証セット追加** と **⑨`getReport` のラベル改変** を除く全てを修正する。
 
 ## 対象問題
 ①損失の多重活性化 / ②train/eval未設定 / ③no_grad未使用 / ⑤同一分割 / ⑥毎エポックシャッフル無 / ⑦バッチサイズ1 / ⑧退化した重み / ⑩int64キャスト

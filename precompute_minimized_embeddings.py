@@ -22,7 +22,7 @@ precompute_minimized_embeddings.py
   全 t_w で入力グラフ数が 308 件に揃う。
   なお 0 エッジグラフに対しては RWW / Word2Vec を呼ばない。語彙サイズ1で
   gensim(hs=1) の Huffman木バグを踏んでハングするため
-  （詳細: code_report_and_plan/precompute_word2vec_hang_final_report.md）。
+  （詳細: code_report_and_plan/[Report]precompute_word2vec_hang_final_report.md）。
 
 並列化:
   multiprocessing.Pool を使い t_w 単位でプロセス並列化する。

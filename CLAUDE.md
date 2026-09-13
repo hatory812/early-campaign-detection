@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## このリポジトリの位置づけ
 
-上流は DECODE (Density-aware Walks for Coordinated Campaign Detection, ECML/PKDD 2025) の公式実装 (`README.md` 参照)。本リポジトリはそれをフォークし、**「カスケードグラフをどれだけ観測すれば組織的キャンペーンを検出できるか」= 観測期間 t_w の掃引実験**を追加したもの (`研究概要.md`)。上流由来コード (`train_twitter_MPNN.py`, `kcore_rww.py`, `models.py`, `k_truss.py`, `run/`) には再現を妨げるバグが多数あり、調査・修正の記録が `code_report_and_plan/` にある (`REPRODUCTION_ISSUES.md` → `IMPLEMENTATION_PLAN.md` の順に読むと経緯が分かる)。
+上流は DECODE (Density-aware Walks for Coordinated Campaign Detection, ECML/PKDD 2025) の公式実装 (`README.md` 参照)。本リポジトリはそれをフォークし、**「カスケードグラフをどれだけ観測すれば組織的キャンペーンを検出できるか」= 観測期間 t_w の掃引実験**を追加したもの (`研究概要.md`)。上流由来コード (`train_twitter_MPNN.py`, `kcore_rww.py`, `models.py`, `k_truss.py`, `run/`) には再現を妨げるバグが多数あり、調査・修正の記録が `code_report_and_plan/` にある (`[Report]REPRODUCTION_ISSUES.md` → `[Plan]IMPLEMENTATION_PLAN.md` の順に読むと経緯が分かる)。
 
 ## 実行環境
 
@@ -92,7 +92,7 @@ python3 plot_degree_histograms.py --t-w 1min 2min --jobs 8 --out-root results/<�
 
 ### メモリ
 
-`train_twitter_snapshot.py` は 312 グラフを全部メモリに常駐させ、さらに t_w ごとに全スナップショットを複製するため、t_w=600 で必ずホスト全体の OOM killer が発火し tmux セッションごと落ちた (`code_report_and_plan/snapshot_oom_investigation.md`)。`train_minimized_snapshot_mpnn.py` はその反省から既定 `num_workers=1`、空きメモリ監視、`--dry_run` / `--test_tw` を持つ。大きい t_w を扱うコードを触るときはメモリ増加が t_w に対して単調である前提で見積もること。JSON 全体をパースせずに済むなら `degree_extract.py` の mmap + 正規表現方式を使う (前提条件はファイル冒頭の docstring に書いてある)。
+`train_twitter_snapshot.py` は 312 グラフを全部メモリに常駐させ、さらに t_w ごとに全スナップショットを複製するため、t_w=600 で必ずホスト全体の OOM killer が発火し tmux セッションごと落ちた (`code_report_and_plan/[Report]snapshot_oom_investigation.md`)。`train_minimized_snapshot_mpnn.py` はその反省から既定 `num_workers=1`、空きメモリ監視、`--dry_run` / `--test_tw` を持つ。大きい t_w を扱うコードを触るときはメモリ増加が t_w に対して単調である前提で見積もること。JSON 全体をパースせずに済むなら `degree_extract.py` の mmap + 正規表現方式を使う (前提条件はファイル冒頭の docstring に書いてある)。
 
 ## 出力の置き場
 

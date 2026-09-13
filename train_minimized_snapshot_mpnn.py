@@ -16,8 +16,8 @@ train_minimized_snapshot_mpnn.py
   - 冪等性: 既に結果 JSON が存在する t_w はスキップするので、中断後の再実行に強い。
 
 ★ 実行前に必ず確認すること
-  (詳細: code_report_and_plan/minimized_snapshot_mpnn_sweep_plan.md,
-         code_report_and_plan/snapshot_oom_investigation.md)
+  (詳細: code_report_and_plan/[Plan]minimized_snapshot_mpnn_sweep_plan.md,
+         code_report_and_plan/[Report]snapshot_oom_investigation.md)
   - ホストの空きメモリ (`free -h` の available)。過去に train_twitter_snapshot.py で
     ホスト全体の OOM killer が発火し、同一セッションスコープの tmux サーバごと
     巻き添えで kill された実績がある。
@@ -244,7 +244,7 @@ def main():
             main_logger.warning(
                 f"空きメモリが {mem_gb:.1f} GiB と少ないです。過去に train_twitter_snapshot.py で"
                 f"ホスト全体のOOM killerが発火しtmuxごと巻き添えで落ちた実績があります"
-                f"(詳細: code_report_and_plan/snapshot_oom_investigation.md)。"
+                f"(詳細: code_report_and_plan/[Report]snapshot_oom_investigation.md)。"
                 f"num_workers={args.num_workers} で実行しますが、"
                 f"まず --test_tw と --dry_run で小規模に確認することを強く推奨します。")
 

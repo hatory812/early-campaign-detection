@@ -14,7 +14,7 @@
 連番プレフィックス付き・非 ASCII 置換済み。本スクリプトが作るのは次数分布ヒストグラムで、
 ファイル名は predictions.log の file_name のまま (分類基準はどちらも predicted で同じ)。
 
-計画は code_report_and_plan/copy_test_degree_histograms_plan.md を参照。
+計画は code_report_and_plan/[Plan]copy_test_degree_histograms_plan.md を参照。
 実データで確認済みの前提が 2 つある:
 
 * 学習が CUDA OOM で落ちた t_w はディレクトリが空で predictions.log が無い

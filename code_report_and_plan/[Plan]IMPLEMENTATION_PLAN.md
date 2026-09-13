@@ -2,7 +2,7 @@
 
 対象論文: *Density-aware Walks for Coordinated Campaign Detection (DECODE)*
 対象実験: **実験1 = Campaign vs Non-campaign の二値分類**（Table 3 / Table 4 / Fig.2）
-出典: `REPRODUCTION_ISSUES.md` の指摘事項に対する対応方針の確定版。
+出典: `[Report]REPRODUCTION_ISSUES.md` の指摘事項に対する対応方針の確定版。
 
 本ドキュメントは**着手前の計画**であり、コードの変更はまだ行っていない。
 

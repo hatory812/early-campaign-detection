@@ -3,7 +3,7 @@
     <root>/<t_w>min/results/degree_distribution_<exp>/pred_<k>/*.png
         -> <root>/<t_w>min/results/degree_distribution_<exp>/summary/pred_<k>.png
 
-計画は code_report_and_plan/copy_test_degree_histograms_plan.md を参照。
+計画は code_report_and_plan/[Plan]copy_test_degree_histograms_plan.md を参照。
 
 出力を summary/ サブフォルダに置くのは、
 * 直下に置くと copy_test_degree_histograms.py の remove_flat_pngs() に消されるため
