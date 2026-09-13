@@ -19,9 +19,9 @@
 
 * 学習が CUDA OOM で落ちた t_w はディレクトリが空で predictions.log が無い
   (20260805 の実験では 16/18/22/28/30/31/32/40 の 8 個)。エラーにせずスキップする。
-* エッジ 0 本のグラフには per_graph の画像が存在しない (plot_degree_histograms.py が
-  図を出力しないため)。predictions.log の num_edges 列で照合し、0 なら正常な欠落、
-  0 以外なら警告として報告する。
+* テスト対象のグラフには必ず per_graph の画像がある。欠落はすべて警告として報告する。
+  欠落が出る典型的な原因は、自己ループ修正 (1ec2d56) より前のデータセットから作った
+  古い次数統計を --degree_root に指定していること (警告の edges= が 0 ばかりなら、まずこれを疑う)。
 
 ファイル名の照合は素の一致を優先し、外れたときだけ NFC 正規化で再照合する
 (本リポジトリはファイル名の NFD/NFC 混在が既知の問題のため)。
@@ -81,7 +81,7 @@ def remove_flat_pngs(out_dir, dry_run):
 
 
 def process_tw(t_w, pred_root, degree_root, run_name, exp, dry_run):
-    """1 つの t_w を処理し、(予測値ごとのコピー数, 正常な欠落, 警告付き欠落, 削除数) を返す。"""
+    """1 つの t_w を処理し、(予測値ごとのコピー数, 欠落, 削除数) を返す。"""
     log_path = os.path.join(pred_root, f'{t_w}min', run_name, exp, 'predictions.log')
     per_graph_dir = os.path.join(degree_root, f'{t_w}min', 'per_graph')
     out_dir = os.path.join(pred_root, f'{t_w}min', 'results', f'degree_distribution_{exp}')
@@ -91,13 +91,12 @@ def process_tw(t_w, pred_root, degree_root, run_name, exp, dry_run):
 
     removed = remove_flat_pngs(out_dir, dry_run)
 
-    copied, empty_missing, unexpected = {}, [], []
+    copied, missing = {}, []
     for file_name, num_edges, predicted in entries:
         png = f'{file_name}.png'
         src_name = exact.get(png) or normalized.get(nfc(png))
         if src_name is None:
-            # エッジ 0 本なら図が作られないのが仕様。それ以外は要調査。
-            (empty_missing if num_edges == 0 else unexpected).append((file_name, num_edges))
+            missing.append((file_name, num_edges))
             continue
         # テスト時の予測値でサブフォルダに振り分ける (actual ではなく predicted)。
         sub_dir = os.path.join(out_dir, f'pred_{predicted}')
@@ -107,7 +106,7 @@ def process_tw(t_w, pred_root, degree_root, run_name, exp, dry_run):
                          os.path.join(sub_dir, src_name))
         copied[predicted] = copied.get(predicted, 0) + 1
 
-    return copied, empty_missing, unexpected, removed
+    return copied, missing, removed
 
 
 def main():
@@ -124,7 +123,7 @@ def main():
                            for p in glob.glob(os.path.join(args.pred_root, '*min')))
                  if m)
 
-    per_class, skipped_tw, total_empty, total_unexpected, total_removed = {}, [], 0, [], 0
+    per_class, skipped_tw, total_missing, total_removed = {}, [], [], 0
     for t_w in tws:
         log_path = os.path.join(args.pred_root, f'{t_w}min', args.run_name,
                                 args.exp, 'predictions.log')
@@ -138,23 +137,19 @@ def main():
             skipped_tw.append(t_w)
             continue
 
-        copied, empty_missing, unexpected, removed = process_tw(
+        copied, missing, removed = process_tw(
             t_w, args.pred_root, args.degree_root, args.run_name, args.exp, args.dry_run)
         for k, v in copied.items():
             per_class[k] = per_class.get(k, 0) + v
-        total_empty += len(empty_missing)
-        total_unexpected += [(t_w, n, e) for n, e in unexpected]
+        total_missing += [(t_w, n, e) for n, e in missing]
         total_removed += removed
 
         note = ''
         if removed:
             note += f'  平置きの旧出力を削除 {removed}'
-        if empty_missing:
-            note += f'  欠落(エッジ0本) {len(empty_missing)}: ' \
-                    + ', '.join(n for n, _ in empty_missing)
-        if unexpected:
-            note += f'  [WARN] 原因不明の欠落 {len(unexpected)}: ' \
-                    + ', '.join(f'{n}(edges={e})' for n, e in unexpected)
+        if missing:
+            note += f'  [WARN] 欠落 {len(missing)}: ' \
+                    + ', '.join(f'{n}(edges={e})' for n, e in missing)
         breakdown = ' '.join(f'pred_{k}={copied.get(k, 0):2d}' for k in sorted(copied))
         print(f't_w={t_w:3d}  copied={sum(copied.values()):3d} ({breakdown}){note}')
 
@@ -168,11 +163,10 @@ def main():
     if total_removed:
         removed_verb = '削除予定' if args.dry_run else '削除'
         print(f'平置きの旧出力を{removed_verb}: {total_removed} 枚')
-    print(f'正常な欠落 (エッジ0本): {total_empty} 件')
-    if total_unexpected:
-        print(f'[WARN] 説明のつかない欠落: {len(total_unexpected)} 件 -> {total_unexpected}')
+    if total_missing:
+        print(f'[WARN] 欠落: {len(total_missing)} 件 -> {total_missing}')
     else:
-        print('説明のつかない欠落: 0 件')
+        print('欠落: 0 件')
 
 
 if __name__ == '__main__':
