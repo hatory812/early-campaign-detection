@@ -29,6 +29,7 @@ from torch_geometric.utils import to_networkx
 from torch.nn.functional import normalize
 import torch.nn as nn
 from statistics import mean, stdev
+import math
 import os
 import pickle
 import shutil
@@ -89,7 +90,7 @@ def get_mean_time(time_ranges):
 
     return mean_time, stdev_time
 
-def process_data(files, graph_labels, exceptions, rww_attr, node_attr):
+def process_data(files, graph_labels, exceptions, rww_attr, node_attr, size_only=0):
     data_list = []
     label_list = []
 
@@ -128,6 +129,11 @@ def process_data(files, graph_labels, exceptions, rww_attr, node_attr):
                 x = torch.tensor([graph.nodes[node]['truss_embedding'] for node in graph.nodes()])
             else:
                 x = torch.tensor([graph.nodes[node]['node_attr'] for node in graph.nodes()])
+            # 規模の対照: ノード特徴を [log(1+N), log(1+E)] (全ノード同じ値) に置き換える
+            # (code_report_and_plan/[Plan]gcn_size_only_plan.md)。
+            if size_only == 1:
+                n, e = graph.number_of_nodes(), graph.number_of_edges()
+                x = torch.tensor([[math.log1p(n), math.log1p(e)]] * n, dtype=torch.float)
 
             global num_edge_features, num_node_features
 
@@ -160,7 +166,7 @@ def process_data(files, graph_labels, exceptions, rww_attr, node_attr):
     return data_list, label_list
 
 
-def load_data(data_path, rww_attr, node_attr):
+def load_data(data_path, rww_attr, node_attr, size_only=0):
     print("Loading dataset.....")
 
     path = data_path
@@ -189,7 +195,7 @@ def load_data(data_path, rww_attr, node_attr):
     exceptions = ['graph_labels', "Gomis_noncampaign_fulldata", "#Hıdırellez_noncampaign_fulldata",
                 '35YaşŞartı_TorbaYasaya__2023-03-26_campaign_fulldata', 'Haluk_noncampaign_fulldata',
                 '#ErdenTimurSezonu_noncampaign_fulldata', 'Gustavo_noncampaign_fulldata']
-    data_list, label_list = process_data(files, graph_labels, exceptions, rww_attr, node_attr)
+    data_list, label_list = process_data(files, graph_labels, exceptions, rww_attr, node_attr, size_only)
 
     return data_list, label_list
 
@@ -424,6 +430,8 @@ if __name__ == '__main__':
     parser.add_argument("--all_graphs_path", help="Mention path to all graphs")
     parser.add_argument("--rww_attr", default="kcore", help="Mention what feature for rww")
     parser.add_argument("--node_attr", default="1", help="Mention whether node features should be used or not")
+    parser.add_argument("--size_only", default=0,
+                        help="1 ならノード特徴を [log(1+N), log(1+E)] だけにする (--rww_attr/--node_attr を無視)")
     parser.add_argument("--batch_size", default=32, help="Mini-batch size for training and inference")
     parser.add_argument("--analysis_out",
                         default="/home/A.hattori/ECMLPKDD25/results/20260715_時間幅0で埋め込み再計算した実験_テスト時のログを可視化",
@@ -441,6 +449,7 @@ if __name__ == '__main__':
     lr = float(args.lr)
     rww_attr = args.rww_attr
     node_attr = int(args.node_attr)
+    size_only = int(args.size_only)
 
     if args.data_type == 'small':
         data_path = small_dir
@@ -449,7 +458,7 @@ if __name__ == '__main__':
 
     epochs = 100
 
-    data_list, label_list = load_data(data_path, rww_attr, node_attr)
+    data_list, label_list = load_data(data_path, rww_attr, node_attr, size_only)
     print("Dataset loading done  ", data_path, len(data_list))
     print(f"Number of node features: {num_node_features} and number of edge features :{num_edge_features}")
 

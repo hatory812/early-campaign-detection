@@ -123,6 +123,7 @@ def build_command(src_dir, run_dir, args):
         '--classify_news', str(args.classify_news),
         '--rww_attr', args.rww_attr,
         '--node_attr', str(args.node_attr),
+        '--size_only', str(args.size_only),
         '--batch_size', str(args.batch_size),
         '--analysis_out', run_dir,
     ]
@@ -213,6 +214,8 @@ def main():
                         help='この縮小データセットは degree_embedding のみ持つため、degree 以外を'
                              '指定すると train_twitter_MPNN.py 側で KeyError になる。')
     parser.add_argument('--node_attr', default=1, type=int)
+    parser.add_argument('--size_only', default=0, type=int,
+                        help='1 ならノード特徴を [log(1+N), log(1+E)] だけにする (規模の対照)')
     parser.add_argument('--batch_size', default=32, type=int)
     parser.add_argument('--force_cpu', action='store_true',
                         help='子プロセスの CUDA_VISIBLE_DEVICES を空にしてCPU実行に固定する。')
