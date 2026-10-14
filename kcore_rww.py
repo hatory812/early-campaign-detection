@@ -153,13 +153,13 @@ def get_embedding(walks, graph, pick):
     model = Word2Vec(
         walks,
         hs=1,
-        negative=0,
+        sg=1,
         alpha=0.0001,
         epochs=100,
         vector_size=128,
-        window=5,
+        window=4,
         min_count=1,
-        workers=1,
+        workers=4,
         seed=42,
     )
     embedding = []
