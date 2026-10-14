@@ -4,22 +4,27 @@ precompute_minimized_embeddings.py
 各 t_w に対して:
   1. /hss01/A.hattori/all_graphs/ の元JSONを読み込む
   2. timestamp <= t0 + t_w*60 のエッジのみ残す（部分グラフ）
-  3. 孤立ノードを除去し、ノードを 0..N-1 へ再ラベル
+  3. 孤立ノード（自己ループの端点を除く）を除去し、ノードを 0..N-1 へ再ラベル
   4. degree_value を部分グラフ上で再計算（フルグラフ由来の値を上書き）
   5. RWW -> Word2Vec で degree_embedding を再計算（未来情報リーク防止）
-  6. rww_all_graphs_minimized/{t_w}min/ に保存
+  6. 控えておいた自己ループを属性ごとグラフに戻し（フルグラフと同じ形にそろえる）、
+     rww_all_graphs_minimized_revised/{t_w}min/ に保存
 
 自己ループのみになるグラフの扱い:
   t_w が小さいと「時間幅内に観測されたエッジが自己ループだけ」になるグラフがある
   （実測: t_w=0 で 15件、t_w=60 で 2件）。自己ループは密度指標の定義から外すため
-  除去するが、そこでグラフごと捨てると t_w ごとに入力グラフ数が変わり
+  RWW / 次数の計算中は除去する（保存直前に属性ごと戻す）。しかし、そうしたグラフを
+  捨てると t_w ごとに入力グラフ数が変わり
   （293件〜308件）、時間幅間で精度を比較できなくなる。しかも脱落は campaign 側に
   偏る（t_w=0 では 15件中 12件）ため、小さい t_w の精度が過大評価される。
   そこで本スクリプトは、そうしたグラフを捨てずに
-    「自己ループの端点ノードだけを残した 0 エッジグラフ」
-  として保存する（degree_value=0、degree_embedding=ゼロベクトル）。
+    「自己ループの端点ノードだけを残したグラフ」
+  として保存する（degree_value=0、degree_embedding=ゼロベクトル。RWW・次数の計算では
+  通常エッジ 0 本だが、保存直前に自己ループを戻すので保存されるグラフは自己ループを持つ）。
   「この時間幅ではまだ他者との相互作用が観測されていない」を素直に表現でき、
   全 t_w で入力グラフ数が 308 件に揃う。
+  自己ループしか持たないノードは、通常のエッジがあるグラフでも残す（次数 0、
+  長さ 1 のウォーク）。フルグラフのデータもこれらのノードと自己ループを持つため。
   なお 0 エッジグラフに対しては RWW / Word2Vec を呼ばない。語彙サイズ1で
   gensim(hs=1) の Huffman木バグを踏んでハングするため
   （詳細: code_report_and_plan/[Report]precompute_word2vec_hang_final_report.md）。
@@ -82,7 +87,8 @@ ATTR_KEYS = {
 
 def set_degenerate_attributes(graph, pick):
     """
-    エッジ0本の退化グラフに、密度値0とゼロ埋め込みを直接付与する。
+    通常エッジ0本の退化グラフ（自己ループは除去済み。保存直前に呼び出し側が戻す）に、
+    密度値0とゼロ埋め込みを直接付与する。
 
     RWW / Word2Vec は呼ばない。ウォークが「長さ1のウォーク×ノード数」しか
     生成されず語彙が退化するうえ、ノード1個のケースでは gensim(hs=1) の
@@ -119,12 +125,16 @@ def load_and_filter(file_path, t_w):
     元JSONを読み込み、t_w 分以内のエッジだけ残した NetworkX DiGraph を返す。
 
     - all_graphs/ は旧 NetworkX 形式（'links' キー）なので edges='links' で読む。
-    - エッジフィルタ後に孤立ノードを除去し、ノードを 0..N-1 へ再ラベルする。
+    - 自己ループは属性ごと控えてグラフから除去する（密度指標・RWW から外すため）。
+      控えた自己ループは (u, v, 属性dict) のリストとして、再ラベル後の番号で返す。
+      保存直前に呼び出し側が graph へ戻す。
+    - エッジフィルタ後に、自己ループの端点ではない孤立ノードを除去し、
+      ノードを 0..N-1 へ再ラベルする。
       （get_embedding が range(graph.number_of_nodes()) でアクセスするため必須）
-    - 自己ループを除いた実エッジが 1 本も残らない場合は、自己ループの端点ノード
-      （= t_w 内に行動があったユーザ）だけを残した 0 エッジグラフを返す。
+    - 自己ループの端点ノード（= t_w 内に行動があったユーザ）は、通常のエッジが
+      無くても残す。通常のエッジが 1 本も残らない場合は 0 エッジグラフになり、
       呼び出し側は graph.number_of_edges() == 0 で退化ケースを判定する。
-    - t_w 内にエッジが 1 本もない（自己ループすらない）場合のみ None を返す。
+    - 戻り値は (graph, selfloops)。ノードが 0 個なら None を返す。
     """
     with open(file_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
@@ -149,25 +159,24 @@ def load_and_filter(file_path, t_w):
     ]
     graph.remove_edges_from(remove_edges)
 
-    # 自己ループは密度指標(degree/kcore/ktruss)の定義から外すため常に除去するが、
-    # 端点だけは退化ケースの復元用に控えておく。
-    selfloop_nodes = {u for u, _ in nx.selfloop_edges(graph)}
+    # 自己ループは密度指標(degree/kcore/ktruss)の定義から外すため一旦除去するが、
+    # 属性ごと控えておき、保存直前に戻す（フルグラフと同じ形にそろえる）。
+    selfloops = [(u, v, dict(d)) for u, v, d in graph.edges(data=True) if u == v]
+    selfloop_nodes = {u for u, _, _ in selfloops}
     graph.remove_edges_from(nx.selfloop_edges(graph))
 
-    isolates = list(nx.isolates(graph))
-    if graph.number_of_edges() > 0:
-        graph.remove_nodes_from(isolates)
-    else:
-        # 退化ケース: 実エッジが 1 本も残らなかった。グラフごと捨てると t_w ごとに
-        # 入力グラフ数が変わってしまうため、自己ループを持っていたノードだけ残した
-        # 0 エッジグラフとして返す（モジュール冒頭の docstring 参照）。
-        graph.remove_nodes_from([n for n in isolates if n not in selfloop_nodes])
-        if graph.number_of_nodes() == 0:
-            return None
+    # 自己ループの端点は孤立していても残す。通常のエッジが 1 本も残らなければ
+    # 0 エッジグラフになる（グラフごと捨てると t_w ごとに入力グラフ数が変わるため。
+    # モジュール冒頭の docstring 参照）。
+    graph.remove_nodes_from([n for n in nx.isolates(graph) if n not in selfloop_nodes])
+    if graph.number_of_nodes() == 0:
+        return None
 
     # ノードを 0..N-1 へ再ラベル（get_embedding の range() アクセスに必須）
-    graph = nx.relabel_nodes(graph, {n: i for i, n in enumerate(graph.nodes())})
-    return graph
+    mapping = {n: i for i, n in enumerate(graph.nodes())}
+    graph = nx.relabel_nodes(graph, mapping)
+    selfloops = [(mapping[u], mapping[v], d) for u, v, d in selfloops]
+    return graph, selfloops
 
 
 def process_one_graph(file_path, file_name, t_w, out_dir, pick, comp, logger):
@@ -179,17 +188,20 @@ def process_one_graph(file_path, file_name, t_w, out_dir, pick, comp, logger):
     graph = None
     walks = None
     try:
-        graph = load_and_filter(file_path, t_w)
-        if graph is None:
+        loaded = load_and_filter(file_path, t_w)
+        if loaded is None:
             logger.warning(f"SKIP t_w={t_w}  {file_name}: no edges at all after filter")
             return False
+        graph, selfloops = loaded
+        loaded = None  # finally の gc.collect() までグラフへの参照を残さない
 
         if graph.number_of_edges() == 0:
             # 退化グラフ（自己ループのみ）: RWW / Word2Vec は呼ばずゼロ埋め込みを付ける
             graph = set_degenerate_attributes(graph, pick)
             logger.info(
                 f"DEGENERATE t_w={t_w}  {file_name}: "
-                f"self-loops only -> {graph.number_of_nodes()} nodes / 0 edges, zero embedding")
+                f"self-loops only -> {graph.number_of_nodes()} nodes / 0 regular edges "
+                f"(self-loops restored before save), zero embedding")
         else:
             graph = get_degree(graph)
             walks = get_rww(graph, pick, comp)
@@ -205,6 +217,9 @@ def process_one_graph(file_path, file_name, t_w, out_dir, pick, comp, logger):
                     f"-> skipped Word2Vec, zero embedding")
             else:
                 graph = get_embedding(walks, graph, pick)
+
+        # 控えておいた自己ループを属性ごと戻す（0 エッジグラフにも戻す）
+        graph.add_edges_from(selfloops)
 
         out_path = os.path.join(out_dir, file_name + '.json')
         graph_json = nx.node_link_data(graph)

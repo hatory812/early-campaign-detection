@@ -144,9 +144,10 @@ def process_data(files, graph_labels, exceptions, rww_attr, node_attr, size_only
                 edge_attr = torch.tensor(
                     [graph.edges[edge]['edge_attr'] for edge in edges])
             else:
-                # 時間幅を絞ったデータセットには「観測されたエッジが自己ループだけ」
-                # だったグラフが 0 エッジグラフとして含まれる
-                # (precompute_minimized_embeddings.py の docstring を参照)。
+                # 作り直した縮小データ (自己ループを戻して保存) では通常到達しない。
+                # 旧データには「観測されたエッジが自己ループだけ」のグラフが
+                # 0 エッジグラフとして含まれる (precompute_minimized_embeddings.py の
+                # docstring を参照)ので、その場合のための分岐。
                 # torch.tensor([]) では shape が (0,) になり transpose できないので
                 # 形の揃った空テンソルを明示的に作る。メッセージパッシングは起きず、
                 # グラフ表現は node_attr のプーリングだけで決まる。
