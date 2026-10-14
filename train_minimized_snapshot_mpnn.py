@@ -216,7 +216,7 @@ def main():
     parser.add_argument('--node_attr', default=1, type=int)
     parser.add_argument('--size_only', default=0, type=int,
                         help='1 ならノード特徴を [log(1+N), log(1+E)] だけにする (規模の対照)')
-    parser.add_argument('--batch_size', default=32, type=int)
+    parser.add_argument('--batch_size', default=1, type=int)
     parser.add_argument('--force_cpu', action='store_true',
                         help='子プロセスの CUDA_VISIBLE_DEVICES を空にしてCPU実行に固定する。')
     parser.add_argument('--test_tw', default=None,

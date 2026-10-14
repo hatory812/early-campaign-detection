@@ -433,7 +433,7 @@ if __name__ == '__main__':
     parser.add_argument("--node_attr", default="1", help="Mention whether node features should be used or not")
     parser.add_argument("--size_only", default=0,
                         help="1 ならノード特徴を [log(1+N), log(1+E)] だけにする (--rww_attr/--node_attr を無視)")
-    parser.add_argument("--batch_size", default=32, help="Mini-batch size for training and inference")
+    parser.add_argument("--batch_size", default=1, help="Mini-batch size for training and inference")
     parser.add_argument("--analysis_out",
                         default="/home/A.hattori/ECMLPKDD25/results/20260715_時間幅0で埋め込み再計算した実験_テスト時のログを可視化",
                         help="Base directory for per-test prediction logs and graph visualizations")
