@@ -1,4 +1,5 @@
 import glob
+import os
 import json
 import sys
 import math
@@ -13,8 +14,9 @@ from k_truss import get_k_truss, load_k_truss
 
 def convert_file_id_to_name(path, id):
     global tmp_cnt
-    graph_id_map = json.load(
-        open('./graph_name_mapping.json'))
+    mapping_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), 'graph_name_mapping.json')
+    graph_id_map = json.load(open(mapping_path))
     id_graph_map = dict((v, k) for k, v in graph_id_map.items())
     fname = id_graph_map[int(id)]
     file_path = path+"/"+fname.rstrip()+'_fulldata.json'
@@ -180,7 +182,9 @@ def get_embedding(walks, graph, pick):
 def load_data(file, file_name, pick):
     with open(file, 'r') as f:
         data = json.load(f)
-    graph = nx.DiGraph(json_graph.node_link_graph(data))
+    # 生データのエッジは 'links' キー
+    edges = 'links' if 'links' in data else 'edges'
+    graph = nx.DiGraph(json_graph.node_link_graph(data, edges=edges))
     mapping = {node: i for i, node in enumerate(graph.nodes())}
     graph = nx.relabel.relabel_nodes(graph, mapping)
 
@@ -193,7 +197,7 @@ def load_data(file, file_name, pick):
 
     return graph
 
-def run_model(file, path, pick, comp_parameter):
+def run_model(file, path, pick, comp_parameter, out_root):
     file_name = file.split('/')[-1][:-5]
 
     print(file_name)
@@ -210,7 +214,8 @@ def run_model(file, path, pick, comp_parameter):
         graph = get_embedding(walks, graph, pick)
         graph_json = nx.node_link_data(graph)
 
-        output_path = f"/vscratch/grp-erdem/atulanan/graphs/{pick}/{comp_parameter}"
+        output_path = f"{out_root}/{pick}/{comp_parameter}"
+        os.makedirs(output_path, exist_ok=True)
 
         file_name = output_path + "/" + file_name + '.json'
         with open(file_name, 'w') as f:
@@ -223,6 +228,7 @@ if __name__ == "__main__":
     parser.add_argument('--pick', help="Degree or K-Core", default="kcore")
     parser.add_argument("--comp", help="Parameter for comparison", default ="0.5")
     parser.add_argument("--path", help="Path where graphs are stored", default="./")
+    parser.add_argument("--out_root", required=True, help="Output root directory")
 
     args = parser.parse_args()
 
@@ -235,4 +241,4 @@ if __name__ == "__main__":
         print(f"Skipping graphId {args.graphId}: not found in graph_name_mapping.json")
         sys.exit(0)
 
-    run_model(filename, path, args.pick, comp_parameter)
+    run_model(filename, path, args.pick, comp_parameter, args.out_root)
