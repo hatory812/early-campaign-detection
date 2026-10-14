@@ -297,14 +297,14 @@ if __name__ == '__main__':
                         help='Source directory with original graph JSONs')
     parser.add_argument('--label_path', default='/hss01/A.hattori/all_graphs',
                         help='Directory containing graph_labels.json')
-    parser.add_argument('--out_base', default='/hss01/A.hattori/rww_all_graphs_minimized',
+    parser.add_argument('--out_base', default='/hss01/A.hattori/rww_all_graphs_minimized_revised',
                         help='Output base directory')
     parser.add_argument('--pick', default='degree',
                         choices=['degree', 'kcore', 'ktruss'],
                         help='Structural attribute for RWW (degree のみ使用)')
     parser.add_argument('--comp', default='mid',
                         help='RWW comparison parameter: mid / median / 0.5')
-    parser.add_argument('--log_dir', default='/hss01/A.hattori/log',
+    parser.add_argument('--log_dir', default='/hss01/A.hattori/log_revised',
                         help='Log directory (one file per t_w: precompute_tw{t_w}.log)')
     parser.add_argument('--test_tw', default=None,
                         help='テスト用：処理する t_w をカンマ区切りで指定 (e.g. "5,40,300"). '

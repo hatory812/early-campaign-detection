@@ -1,7 +1,7 @@
 """
 train_minimized_snapshot_mpnn.py
 
-/hss01/A.hattori/rww_all_graphs_minimized/{t_w}min/ (precompute_minimized_embeddings.py が
+/hss01/A.hattori/rww_all_graphs_minimized_revised/{t_w}min/ (precompute_minimized_embeddings.py が
 生成した、各時間幅 t_w でエッジ・ノードを縮小しノード特徴量(degree_embedding)を再計算済みの
 データセット, t_w=1..60) を train_twitter_MPNN.py に t_w ごとに読み込ませて学習・評価する.
 
@@ -193,7 +193,7 @@ def process_tw(task):
 def main():
     parser = argparse.ArgumentParser(
         description="rww_all_graphs_minimized/{t_w}min を train_twitter_MPNN.py に順次/並列投入する.")
-    parser.add_argument('--src_root', default='/hss01/A.hattori/rww_all_graphs_minimized',
+    parser.add_argument('--src_root', default='/hss01/A.hattori/rww_all_graphs_minimized_revised',
                         help='t_w ディレクトリの親')
     parser.add_argument('--out_root',
                         default='/home/A.hattori/ECMLPKDD25/results/20260706_時間幅1-60で埋め込み再計算した実験_OutOfMemory回避',
