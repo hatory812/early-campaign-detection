@@ -201,7 +201,7 @@ def load_data(data_path, rww_attr, node_attr, size_only=0):
     return data_list, label_list
 
 
-def split_data(data_list, label_list, seed=None):
+def split_data(data_list, label_list, seed=None, test_size=0.20):
     campaign_news_graphs = []
     noncampaign_news_graphs = []
 
@@ -215,7 +215,7 @@ def split_data(data_list, label_list, seed=None):
         label_list = [1] * len(campaign_news_graphs) + [0] * len(campaign_news_graphs)
 
     train_data, test_data, train_labels, test_labels = train_test_split(data_list, label_list, stratify=label_list,
-                                                                        test_size=0.20, shuffle=True,
+                                                                        test_size=test_size, shuffle=True,
                                                                         random_state=seed)
     random.shuffle(train_data)
 
@@ -376,19 +376,25 @@ def save_graph_image(data, name, pred, actual, out_path):
     plt.close(fig)
 
 
-def log_and_visualize(test_data, y_pred, y_actual, run_dir):
+def log_and_visualize(test_data, y_pred, y_actual, y_scores, run_dir, save_images=True):
     """Log per-file predictions vs. ground truth and save a visualization of
     each test graph into a folder named after its predicted label.
+    save_images=False のときは predictions.log だけを書き、画像は保存しない
+    (画像保存は長い t_w で所要時間の大半を占めるため)。
 
-    Relies on predict() using shuffle=False so that y_pred[i] / y_actual[i]
-    correspond to test_data[i].
+    Relies on predict() using shuffle=False so that y_pred[i] / y_actual[i] /
+    y_scores[i] correspond to test_data[i].
+
+    y_scores[i] is the softmax probability of class 1 (campaign); the trailing
+    'score' column is appended after the existing six so that readers keying on
+    column names (csv.DictReader) keep working.
     """
     os.makedirs(run_dir, exist_ok=True)
     log_path = os.path.join(run_dir, 'predictions.log')
 
     total = len(test_data)
     with open(log_path, 'w') as logf:
-        logf.write("file_name\tpredicted\tactual\tcorrect\tnum_nodes\tnum_edges\n")
+        logf.write("file_name\tpredicted\tactual\tcorrect\tnum_nodes\tnum_edges\tscore\n")
         for i, data in enumerate(test_data):
             name = getattr(data, 'name', f'graph_{i}')
             pred = int(y_pred[i])
@@ -397,8 +403,11 @@ def log_and_visualize(test_data, y_pred, y_actual, run_dir):
             num_edges = int(data.edge_index.shape[1])
             correct = (pred == actual)
 
-            logf.write(f"{name}\t{pred}\t{actual}\t{correct}\t{num_nodes}\t{num_edges}\n")
+            logf.write(f"{name}\t{pred}\t{actual}\t{correct}\t{num_nodes}\t{num_edges}"
+                       f"\t{float(y_scores[i]):.6f}\n")
 
+            if not save_images:
+                continue
             # One folder per predicted label; index-prefixed, sanitized filename
             # keeps names unique and filesystem-safe (keeps unicode word chars).
             label_dir = os.path.join(run_dir, f'pred_{pred}')
@@ -408,7 +417,7 @@ def log_and_visualize(test_data, y_pred, y_actual, run_dir):
             save_graph_image(data, name, pred, actual, out_path)
 
             print(f"\r  Saving visualizations {i + 1}/{total}", end='', flush=True)
-    print(f"\n  Wrote predictions log and visualizations to {run_dir}")
+    print(f"\n  Wrote predictions log{' and visualizations' if save_images else ''} to {run_dir}")
 
 
 if __name__ == '__main__':
@@ -434,6 +443,10 @@ if __name__ == '__main__':
     parser.add_argument("--size_only", default=0,
                         help="1 ならノード特徴を [log(1+N), log(1+E)] だけにする (--rww_attr/--node_attr を無視)")
     parser.add_argument("--batch_size", default=1, help="Mini-batch size for training and inference")
+    parser.add_argument("--test_size", default=0.20,
+                        help="テストに回す割合 (層化抽出)。既定 0.20 = 80/20、LEN 論文の設定は 0.25 = 75/25")
+    parser.add_argument("--save_images", default=1,
+                        help="1 ならテスト用グラフの画像を保存する。0 なら保存しない (predictions.log は常に書く)")
     parser.add_argument("--analysis_out",
                         default="/home/A.hattori/ECMLPKDD25/results/20260715_時間幅0で埋め込み再計算した実験_テスト時のログを可視化",
                         help="Base directory for per-test prediction logs and graph visualizations")
@@ -451,6 +464,7 @@ if __name__ == '__main__':
     rww_attr = args.rww_attr
     node_attr = int(args.node_attr)
     size_only = int(args.size_only)
+    save_images = int(args.save_images) == 1
 
     if args.data_type == 'small':
         data_path = small_dir
@@ -475,7 +489,8 @@ if __name__ == '__main__':
 
         # Re-split the data for every run so the reported variance reflects
         # split variability, not just weight initialisation.
-        train_data, test_data, val_data = split_data(data_list, label_list, seed=exp)
+        train_data, test_data, val_data = split_data(data_list, label_list, seed=exp,
+                                                     test_size=float(args.test_size))
 
         if not multivariate:
             criterion = BCEWithLogitsLoss()
@@ -544,7 +559,7 @@ if __name__ == '__main__':
         # Log per-file predictions vs. ground truth and save graph visualizations
         # grouped by predicted label (shuffle=False in predict keeps order aligned).
         run_dir = os.path.join(analysis_base_dir, f'exp{exp}')
-        log_and_visualize(test_data, y_pred, y_actual, run_dir)
+        log_and_visualize(test_data, y_pred, y_actual, y_scores, run_dir, save_images=save_images)
 
         if (exp == 4):
             print(f"Prediction: {y_pred}")
