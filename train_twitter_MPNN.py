@@ -44,6 +44,7 @@ import matplotlib.pyplot as plt
 import copy
 import re
 import hashlib
+import inspect
 
 warnings.filterwarnings("ignore")
 
@@ -172,6 +173,13 @@ def process_data(files, graph_labels, exceptions, rww_attr, node_attr, size_only
 DATASET_CACHE_VERSION = 1
 
 
+def _process_data_source():
+    """process_data とそれが呼ぶこのファイル内の関数 (現状なし) のソースと、読む定数。
+    変更するとキャッシュのキーが変わり、古い特徴量が使われ続けるのを防ぐ。
+    process_data が別の関数や定数を使うようになったら、ここに足すこと。"""
+    return inspect.getsource(process_data) + f'\nEDGE_ATTR_DIM={EDGE_ATTR_DIM}'
+
+
 def _dataset_cache_path(cache_dir, data_path, rww_attr, node_attr, size_only,
                         label_file, files, exceptions):
     """入力 (データ・ラベル・設定・形式の版数) が同じなら同じ、変われば別になるキャッシュのパス。"""
@@ -179,7 +187,7 @@ def _dataset_cache_path(cache_dir, data_path, rww_attr, node_attr, size_only,
         st = os.stat(p)
         return (os.path.basename(p), st.st_size, st.st_mtime_ns)
 
-    key = repr((DATASET_CACHE_VERSION, data_path, rww_attr, node_attr, size_only,
+    key = repr((DATASET_CACHE_VERSION, _process_data_source(), data_path, rww_attr, node_attr, size_only,
                 stat(label_file), [stat(f) for f in files], exceptions))
     digest = hashlib.sha1(key.encode('utf-8')).hexdigest()[:16]
     tail = '_'.join(os.path.normpath(data_path).split(os.sep)[-2:])

@@ -7,6 +7,8 @@
   python3 check_dataset_cache.py --data_path <小規模データ> --cache_dir <使い捨てのキャッシュ先>
 """
 import argparse
+import contextlib
+import io
 import glob
 import os
 import shutil
@@ -43,7 +45,12 @@ def main():
     args = ap.parse_args()
     M.multivariate = 0
     M.classify_news = 0
-    shutil.rmtree(args.cache_dir, ignore_errors=True)
+    # 本番のキャッシュ (既定の --cache_dir 配下) を消さないよう、使い捨ての場所だけ受け付ける。
+    cache_dir = os.path.realpath(args.cache_dir)
+    prod = os.path.realpath('/hss01/A.hattori/cache')
+    if cache_dir == prod:
+        raise SystemExit(f'refusing to use production cache dir: {cache_dir}')
+    shutil.rmtree(os.path.join(cache_dir, 'train_twitter_MPNN'), ignore_errors=True)
 
     # 1. キャッシュあり/なしで一致 (1 回目=保存、2 回目=復元)
     ref = load(args.data_path, '')
@@ -51,7 +58,13 @@ def main():
     first = load(args.data_path, args.cache_dir)
     assert len(cache_files(args.cache_dir)) == 1
     M.num_node_features = M.num_edge_features = None  # 復元で戻ることの確認
-    second = load(args.data_path, args.cache_dir)
+    pt = cache_files(args.cache_dir)[0]
+    mt = os.stat(pt).st_mtime_ns
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        second = load(args.data_path, args.cache_dir)
+    assert 'Dataset cache hit' in buf.getvalue(), 'キャッシュヒットしていない'
+    assert cache_files(args.cache_dir) == [pt] and os.stat(pt).st_mtime_ns == mt, 'ヒット時に再保存された'
     assert_same(ref, first, 'ref vs save')
     assert_same(ref, second, 'ref vs hit')
     print('1 OK: cache hit == no cache')
@@ -67,6 +80,17 @@ def main():
     assert len(cache_files(args.cache_dir)) == 2, 'mtime 変更で別キャッシュにならない'
     assert_same(ref, third, 'mtime')
     print('2 OK: mtime change -> new cache')
+
+    # 2b. process_data のソースが変わると別キャッシュ
+    n = len(cache_files(args.cache_dir))
+    orig = M._process_data_source
+    M._process_data_source = lambda: orig() + '\n# changed'
+    try:
+        load(args.data_path, args.cache_dir)
+    finally:
+        M._process_data_source = orig
+    assert len(cache_files(args.cache_dir)) == n + 1, 'process_data のソース変更で別キャッシュにならない'
+    print('2b OK: process_data source change -> new cache')
 
     # 3. 壊れた .pt は作り直す
     for p in cache_files(args.cache_dir):
