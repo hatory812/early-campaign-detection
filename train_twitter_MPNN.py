@@ -43,6 +43,7 @@ matplotlib.use('Agg')  # Headless backend: safe for saving many figures on a ser
 import matplotlib.pyplot as plt
 import copy
 import re
+import hashlib
 
 warnings.filterwarnings("ignore")
 
@@ -167,7 +168,26 @@ def process_data(files, graph_labels, exceptions, rww_attr, node_attr, size_only
     return data_list, label_list
 
 
-def load_data(data_path, rww_attr, node_attr, size_only=0):
+# load_data の結果のキャッシュ形式の版数。保存する中身や形式を変えたら上げる。
+DATASET_CACHE_VERSION = 1
+
+
+def _dataset_cache_path(cache_dir, data_path, rww_attr, node_attr, size_only,
+                        label_file, files, exceptions):
+    """入力 (データ・ラベル・設定・形式の版数) が同じなら同じ、変われば別になるキャッシュのパス。"""
+    def stat(p):
+        st = os.stat(p)
+        return (os.path.basename(p), st.st_size, st.st_mtime_ns)
+
+    key = repr((DATASET_CACHE_VERSION, data_path, rww_attr, node_attr, size_only,
+                stat(label_file), [stat(f) for f in files], exceptions))
+    digest = hashlib.sha1(key.encode('utf-8')).hexdigest()[:16]
+    tail = '_'.join(os.path.normpath(data_path).split(os.sep)[-2:])
+    return os.path.join(cache_dir, 'train_twitter_MPNN',
+                        f'{tail}_{rww_attr}_na{node_attr}_so{size_only}_{digest}.pt')
+
+
+def load_data(data_path, rww_attr, node_attr, size_only=0, cache_dir=''):
     print("Loading dataset.....")
 
     path = data_path
@@ -184,19 +204,57 @@ def load_data(data_path, rww_attr, node_attr, size_only=0):
         files = sorted(glob.glob(path + '/*_fulldata.json'))
 
     if multivariate:
-        with open(label_path + "/graph_labels_campaign.json", "r") as f:
-            graph_labels = json.load(f)
+        label_file = label_path + "/graph_labels_campaign.json"
     elif classify_news:
-        with open(label_path + "/graph_labels_news.json", "r") as f:
-            graph_labels = json.load(f)
+        label_file = label_path + "/graph_labels_news.json"
     else:
-        with open(label_path + "/graph_labels.json", "r") as f:
-            graph_labels = json.load(f)
+        label_file = label_path + "/graph_labels.json"
+    with open(label_file, "r") as f:
+        graph_labels = json.load(f)
 
     exceptions = ['graph_labels', "Gomis_noncampaign_fulldata", "#Hıdırellez_noncampaign_fulldata",
                 '35YaşŞartı_TorbaYasaya__2023-03-26_campaign_fulldata', 'Haluk_noncampaign_fulldata',
                 '#ErdenTimurSezonu_noncampaign_fulldata', 'Gustavo_noncampaign_fulldata']
+
+    # 約 100GB の JSON を毎回読み直さないよう、結果を cache_dir に保存して使い回す。
+    # cache_dir='' ならキャッシュしない。キャッシュの失敗は警告だけ出して続行する。
+    cache_path = None
+    if cache_dir:
+        cache_path = _dataset_cache_path(cache_dir, data_path, rww_attr, node_attr, size_only,
+                                         label_file, files, exceptions)
+        if os.path.exists(cache_path):
+            t0 = time.time()
+            try:
+                cache = torch.load(cache_path, weights_only=False)
+                if cache['version'] != DATASET_CACHE_VERSION:
+                    raise ValueError(f"cache version {cache['version']} != {DATASET_CACHE_VERSION}")
+                global num_node_features, num_edge_features
+                num_node_features = cache['num_node_features']
+                num_edge_features = cache['num_edge_features']
+                print(f"Dataset cache hit: {cache_path} ({time.time() - t0:.1f}s)")
+                return cache['data_list'], cache['label_list']
+            except Exception as e:
+                print(f"Warning: dataset cache unreadable, rebuilding: {cache_path} ({e})")
+
     data_list, label_list = process_data(files, graph_labels, exceptions, rww_attr, node_attr, size_only)
+
+    if cache_path:
+        t0 = time.time()
+        tmp_path = cache_path + f'.tmp{os.getpid()}'
+        try:
+            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+            torch.save({'version': DATASET_CACHE_VERSION, 'data_list': data_list,
+                        'label_list': label_list, 'num_node_features': num_node_features,
+                        'num_edge_features': num_edge_features}, tmp_path)
+            os.replace(tmp_path, cache_path)
+            print(f"Dataset cache saved: {cache_path} "
+                  f"({os.path.getsize(cache_path) / 1e9:.2f} GB, {time.time() - t0:.1f}s)")
+        except Exception as e:
+            print(f"Warning: dataset cache not saved: {cache_path} ({e})")
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
 
     return data_list, label_list
 
@@ -447,6 +505,8 @@ if __name__ == '__main__':
                         help="テストに回す割合 (層化抽出)。既定 0.20 = 80/20、LEN 論文の設定は 0.25 = 75/25")
     parser.add_argument("--save_images", default=1,
                         help="1 ならテスト用グラフの画像を保存する。0 なら保存しない (predictions.log は常に書く)")
+    parser.add_argument("--cache_dir", default="/hss01/A.hattori/cache",
+                        help="load_data の結果のキャッシュ先 (配下の train_twitter_MPNN/ に保存)。'' で無効")
     parser.add_argument("--analysis_out",
                         default="/home/A.hattori/ECMLPKDD25/results/20260715_時間幅0で埋め込み再計算した実験_テスト時のログを可視化",
                         help="Base directory for per-test prediction logs and graph visualizations")
@@ -473,7 +533,7 @@ if __name__ == '__main__':
 
     epochs = 100
 
-    data_list, label_list = load_data(data_path, rww_attr, node_attr, size_only)
+    data_list, label_list = load_data(data_path, rww_attr, node_attr, size_only, cache_dir=args.cache_dir)
     print("Dataset loading done  ", data_path, len(data_list))
     print(f"Number of node features: {num_node_features} and number of edge features :{num_edge_features}")
 
