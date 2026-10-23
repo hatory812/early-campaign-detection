@@ -15,7 +15,7 @@ cd /home/A.hattori && ./runSingularity_gnn03.sh    # ホストごとに .sif が
 # 中身: singularity run --nv --bind /hss01:/hss01 --bind ${PWD}:/${PWD} ./env_gnn_arm.sif
 ```
 
-長時間実験は tmux 上で回す (`tmux attach -t session1`)。`requirements.txt` は上流のままで実態と合っていない (gensim 欠落、`pytorch-geometric` はパッケージ名誤り、jax 不要) ので、環境構築の参照元にしないこと。
+実験は tmux 上で回す (`tmux attach -t session1`)。`requirements.txt` は上流のままで実態と合っていない (gensim 欠落、`pytorch-geometric` はパッケージ名誤り、jax 不要) ので、環境構築の参照元にしないこと。
 
 ## データ配置 (リポジトリ外・`.gitignore` 済み)
 
@@ -67,7 +67,7 @@ python3 plot_degree_histograms.py --t-w 1min 2min --jobs 8 --out-root results/<�
 
 ### ファイル名とラベルの対応
 
-グラフのファイル名は `<トピック名>_{campaign,noncampaign}_fulldata.json`。ラベル引きは `file_name[:-9]` (`_fulldata` を落とす) を `graph_labels.json` のキーにする、という約束が全スクリプトに散在している。壊れているグラフは各スクリプト内の `exceptions` / `EXCEPTIONS` リスト (`Gomis_noncampaign_fulldata` など 6 件) でスキップ。このリストは `train_twitter_MPNN.py` / `train_twitter_snapshot.py` / `precompute_minimized_embeddings.py` / `plot_snapshot_metrics.py` / `plot_degree_histograms.py` の **5 ファイルに複製されている**ので、除外対象を増減させるときは全部直すこと。`graph_name_mapping.json` はグラフ名 → 連番 ID (1..323) の対応で、`kcore_rww.py --graphId` 実行用。
+グラフのファイル名は `<トピック名>_{campaign,noncampaign}_fulldata.json`。ラベル引きは `file_name[:-9]` (`_fulldata` を落とす) を `graph_labels.json` のキーにする、という約束が全スクリプトに散在している。除外対象のグラフは各スクリプト内の `exceptions` / `EXCEPTIONS` リスト (`Gomis_noncampaign_fulldata` など 6 件) でスキップ (除外の理由は上流のコードにも README にも記載なし)。このリストは `train_twitter_MPNN.py` / `train_twitter_snapshot.py` / `precompute_minimized_embeddings.py` / `plot_snapshot_metrics.py` / `plot_degree_histograms.py` の **5 ファイルに複製されている**ので、除外対象を増減させるときは全部直すこと。`graph_name_mapping.json` はグラフ名 → 連番 ID (1..323) の対応で、`kcore_rww.py --graphId` 実行用。
 
 **既知のバグ: 除外リストが 1 件効いていない。** ディスク上のファイル名は Unicode NFD (`ş` = `s` + 結合セディーユ) だが、`.py` 中のリテラルは NFC で書かれているため、生の文字列比較では `35YaşŞartı_TorbaYasaya__2023-03-26_campaign_fulldata` が一致せず素通りする (`#Hıdırellez` の `ı` は単一コードポイントなので影響なし)。`unicodedata.normalize('NFC', ...)` を挟んでいるのは `plot_degree_histograms.py` だけで、学習側の 4 ファイルは未対応。過去の実験結果はこのグラフを含んだまま集計されている可能性がある。
 
