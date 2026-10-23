@@ -6,7 +6,11 @@ train_minimized_snapshot_mpnn.py
 データセット, t_w=1..60) を train_twitter_MPNN.py に t_w ごとに読み込ませて学習・評価する.
 
 設計方針:
-  - train_twitter_MPNN.py は一切改変しない。t_w ごとに別プロセス (subprocess) として起動する。
+  - train_twitter_MPNN.py は t_w ごとに別プロセス (subprocess) として起動する。本スクリプト側から
+    train_twitter_MPNN.py を書き換えることはしない (呼び出し側の都合でのその場改変はしない) 方針だが、
+    2026-09-29 に predictions.log へ score 列 (campaign 確率 p̂) を追加する改修を
+    train_twitter_MPNN.py 本体に入れた (code_report_and_plan/[Plan]short_window_mechanism_plan.md 手順4)。
+    そのため「一切改変しない」という以前の記述は実態と合わなくなったので改めた。
   - train_twitter_MPNN.py は結果を相対パス
       results/{model}_{rww_attr}_nodeattr{node_attr}_{data_type}_mv{multivariate}.json
     に保存する仕様のため (ファイル名に t_w を含まない)、t_w ごとに作業ディレクトリ (cwd) を
@@ -125,6 +129,7 @@ def build_command(src_dir, run_dir, args):
         '--node_attr', str(args.node_attr),
         '--size_only', str(args.size_only),
         '--batch_size', str(args.batch_size),
+        '--save_images', str(args.save_images),
         '--analysis_out', run_dir,
     ]
 
@@ -217,6 +222,8 @@ def main():
     parser.add_argument('--size_only', default=0, type=int,
                         help='1 ならノード特徴を [log(1+N), log(1+E)] だけにする (規模の対照)')
     parser.add_argument('--batch_size', default=1, type=int)
+    parser.add_argument('--save_images', default=1, type=int,
+                        help='1 ならテスト用グラフの画像を保存する。0 なら保存しない (predictions.log は常に書く)')
     parser.add_argument('--force_cpu', action='store_true',
                         help='子プロセスの CUDA_VISIBLE_DEVICES を空にしてCPU実行に固定する。')
     parser.add_argument('--test_tw', default=None,
